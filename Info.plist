@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>sonyTether</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.johorstudio.sonytether</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>sonyTether</string>
+    <key>CFBundleDisplayName</key>
+    <string>sonyTether</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>26.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.photography</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>sonyTether saves captured photos to the folder you choose.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>sonyTether saves captured photos to the folder you choose.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>sonyTether saves captured photos to the folder you choose.</string>
+    <key>NSRemovableVolumesUsageDescription</key>
+    <string>sonyTether can save captured photos to an external drive.</string>
+    <key>NSNetworkVolumesUsageDescription</key>
+    <string>sonyTether can save captured photos to a network share.</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 Johor Studio. Uses libgphoto2 (LGPL-2.1).</string>
+    <key>NSSupportsAutomaticTermination</key>
+    <false/>
+    <key>NSSupportsSuddenTermination</key>
+    <false/>
+</dict>
+</plist>
