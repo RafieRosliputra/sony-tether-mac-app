@@ -15,13 +15,13 @@ PTP in **PC Remote** mode.
 | **Log** | every gphoto2 call/error in the window, also appended to `~/Library/Logs/sonyTether/sonyTether.log` |
 | **Folder** | native `NSOpenPanel`, remembered across launches (`~/Pictures/sonyTether` by default) |
 
-Version 0.1.0 · macOS 26+ · Apple silicon · app code MIT, libgphoto2 LGPL-2.1.
+Version 0.1.1 · macOS 26+ · Apple silicon · app code MIT, libgphoto2 LGPL-2.1.
 
 ---
 
 ## Install (download)
 
-1. Grab `sonyTether-0.1.0.dmg` from [Releases](https://github.com/RafieRosliputra/sony-tether-mac-app/releases).
+1. Grab `sonyTether-0.1.1.dmg` from [Releases](https://github.com/RafieRosliputra/sony-tether-mac-app/releases).
 2. Open the DMG, drag **sonyTether** into **Applications**.
 3. First launch: the app is **ad-hoc signed, not notarized**. Either
    right-click → **Open**, or clear the download flag once:
