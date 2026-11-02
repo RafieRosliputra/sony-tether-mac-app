@@ -111,8 +111,10 @@ Verified on this machine (macOS 27.2 arm64, libgphoto2 2.5.34):
   (`codesign --verify --deep --strict`)
 - `--selftest`: bundled camlibs load (2467 models incl. `Sony ILCE-7RM3A (PC
   Control)`), iolibs load, capture-file writing works
-- app launches from a quarantined copy (App Translocation), no crash, log file
-  written, UI renders
+- app launches from a copy carrying a Safari-style quarantine flag (App
+  Translocation), no crash, log written, UI renders. Gatekeeper assessment is
+  **disabled on this machine**, so the right-click-Open flow itself was not
+  exercised — see the install note above.
 
 **Not verified:** no a7R III was attached while building this release, so
 live-view frame rate, capture timing and the download path have not been run
