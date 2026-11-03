@@ -40,6 +40,13 @@ struct Preferences {
     var adbRestartAppEnabled: Bool
     var adbRestartAppMinutes: Int
     var adbGalleryPackage: String
+    var adbFullBrightness: Bool
+    var adbStayAwake: Bool
+    var adbRestartGalleryEnabled: Bool
+    var adbRestartGalleryMinutes: Int
+
+    var filenamePrefix: String
+    var prefixHistory: [String]
 
     var barcodeEnabled: Bool
     var barcodeResetsSequence: Bool
@@ -86,6 +93,12 @@ struct Preferences {
             adbRestartAppEnabled: b("adbRestartAppEnabled", false),
             adbRestartAppMinutes: i("adbRestartAppMinutes", 5),
             adbGalleryPackage: d.string(forKey: "adbGalleryPackage") ?? "com.android.gallery3d",
+            adbFullBrightness: b("adbFullBrightness", false),
+            adbStayAwake: b("adbStayAwake", false),
+            adbRestartGalleryEnabled: b("adbRestartGalleryEnabled", false),
+            adbRestartGalleryMinutes: i("adbRestartGalleryMinutes", 5),
+            filenamePrefix: d.string(forKey: "filenamePrefix") ?? "sk",
+            prefixHistory: d.stringArray(forKey: "prefixHistory") ?? ["sk"],
             barcodeEnabled: b("barcodeEnabled", true),
             barcodeResetsSequence: b("barcodeResetsSequence", false)
         )
@@ -124,6 +137,12 @@ struct Preferences {
         d.set(adbRestartAppEnabled, forKey: "adbRestartAppEnabled")
         d.set(adbRestartAppMinutes, forKey: "adbRestartAppMinutes")
         d.set(adbGalleryPackage, forKey: "adbGalleryPackage")
+        d.set(adbFullBrightness, forKey: "adbFullBrightness")
+        d.set(adbStayAwake, forKey: "adbStayAwake")
+        d.set(adbRestartGalleryEnabled, forKey: "adbRestartGalleryEnabled")
+        d.set(adbRestartGalleryMinutes, forKey: "adbRestartGalleryMinutes")
+        d.set(filenamePrefix, forKey: "filenamePrefix")
+        d.set(prefixHistory, forKey: "prefixHistory")
         d.set(barcodeEnabled, forKey: "barcodeEnabled")
         d.set(barcodeResetsSequence, forKey: "barcodeResetsSequence")
     }

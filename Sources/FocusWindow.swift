@@ -114,10 +114,37 @@ final class TransferService {
 
     func adbOpenOnDevice(_ remote: String, serial: String) {
         guard let adb = adbBinary else { return }
+        let pkg = prefs.adbGalleryPackage
+        // Make the gallery see the new file first.
+        _ = run(adb, ["-s", serial, "shell", "am", "broadcast",
+                      "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+                      "-d", "file://\(remote)"])
+        // Force the chosen gallery package instead of showing the chooser.
         _ = run(adb, ["-s", serial, "shell", "am", "start",
                       "-a", "android.intent.action.VIEW",
                       "-d", "file://\(remote)",
-                      "-t", "image/*"])
+                      "-t", "image/*",
+                      "-p", pkg,
+                      "--activity-clear-top"])
+    }
+
+    @discardableResult
+    func adbApplyDisplaySettings() -> String {
+        guard let adb = adbBinary, let serial = adbDevices().first else { return "no device" }
+        var out = ""
+        if prefs.adbFullBrightness {
+            out += run(adb, ["-s", serial, "shell", "settings", "put", "system",
+                             "screen_brightness", "255"])
+            out += run(adb, ["-s", serial, "shell", "settings", "put", "system",
+                             "screen_brightness_mode", "0"])
+        }
+        if prefs.adbStayAwake {
+            out += run(adb, ["-s", serial, "shell", "svc", "power", "stayon", "true"])
+            out += run(adb, ["-s", serial, "shell", "settings", "put", "system",
+                             "screen_off_timeout", "2147483647"])
+        }
+        log.info("ADB display settings applied (brightness=\(prefs.adbFullBrightness), stayon=\(prefs.adbStayAwake))")
+        return out
     }
 
     func syncAll(_ records: [PhotoRecord]) {
@@ -241,32 +268,42 @@ final class FocusImageView: NSView {
             drawOverlay()
             return
         }
+        // The photo keeps a fixed letterboxed frame; zoom and pan happen
+        // inside it, so nothing spills over the rest of the window.
         let fit = min(bounds.width / image.size.width, bounds.height / image.size.height)
-        let scale = fit * zoom
-        let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
-        var pan = offset
-        let maxX = max(0, (size.width - bounds.width) / 2)
-        let maxY = max(0, (size.height - bounds.height) / 2)
-        pan.x = min(maxX, max(-maxX, pan.x))
-        pan.y = min(maxY, max(-maxY, pan.y))
-        var rect = NSRect(x: (bounds.width - size.width) / 2 + pan.x,
-                          y: (bounds.height - size.height) / 2 + pan.y,
-                          width: size.width, height: size.height)
-        image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+        let baseSize = NSSize(width: image.size.width * fit, height: image.size.height * fit)
+        let frame = NSRect(x: (bounds.width - baseSize.width) / 2,
+                           y: (bounds.height - baseSize.height) / 2,
+                           width: baseSize.width, height: baseSize.height)
+
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: frame).addClip()
+
+        let scaled = NSSize(width: frame.width * zoom, height: frame.height * zoom)
+        let maxX = max(0, (scaled.width - frame.width) / 2)
+        let maxY = max(0, (scaled.height - frame.height) / 2)
+        let panX = min(maxX, max(-maxX, offset.x))
+        let panY = min(maxY, max(-maxY, offset.y))
+        let target = NSRect(x: frame.midX - scaled.width / 2 + panX,
+                            y: frame.midY - scaled.height / 2 + panY,
+                            width: scaled.width, height: scaled.height)
+        image.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1)
+
         if showGrid {
             NSColor.white.withAlphaComponent(0.28).setStroke()
             let path = NSBezierPath()
             for i in 1..<3 {
-                let x = rect.minX + rect.width * CGFloat(i) / 3
-                path.move(to: NSPoint(x: x, y: rect.minY))
-                path.line(to: NSPoint(x: x, y: rect.maxY))
-                let y = rect.minY + rect.height * CGFloat(i) / 3
-                path.move(to: NSPoint(x: rect.minX, y: y))
-                path.line(to: NSPoint(x: rect.maxX, y: y))
+                let x = frame.minX + frame.width * CGFloat(i) / 3
+                path.move(to: NSPoint(x: x, y: frame.minY))
+                path.line(to: NSPoint(x: x, y: frame.maxY))
+                let y = frame.minY + frame.height * CGFloat(i) / 3
+                path.move(to: NSPoint(x: frame.minX, y: y))
+                path.line(to: NSPoint(x: frame.maxX, y: y))
             }
             path.lineWidth = 1
             path.stroke()
         }
+        NSGraphicsContext.restoreGraphicsState()
         drawOverlay()
     }
 
@@ -308,6 +345,73 @@ final class FocusImageView: NSView {
         zoom = min(8, max(1, zoom * (1 + event.magnification)))
     }
 
+}
+
+final class OverviewView: NSView {
+    var image: NSImage? { didSet { needsDisplay = true } }
+    var zoom: CGFloat = 1 { didSet { needsDisplay = true } }
+    var onResize: ((NSSize) -> Void)?
+
+    private var resizing = false
+    private var startSize = NSSize.zero
+    private var startPoint = NSPoint.zero
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .arrow)
+        addCursorRect(resizeHandle, cursor: .crosshair)
+    }
+
+    private var resizeHandle: NSRect {
+        NSRect(x: bounds.maxX - 14, y: bounds.minY, width: 14, height: 14)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.black.setFill()
+        bounds.fill()
+        guard let image else { return }
+        let fit = min(bounds.width / image.size.width, bounds.height / image.size.height) * zoom
+        let size = NSSize(width: image.size.width * fit, height: image.size.height * fit)
+        let rect = NSRect(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2,
+                          width: size.width, height: size.height)
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: bounds).addClip()
+        image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+
+        // resize grip
+        NSColor.white.withAlphaComponent(0.35).setStroke()
+        let path = NSBezierPath()
+        for i in 0..<3 {
+            let inset = CGFloat(i) * 4
+            path.move(to: NSPoint(x: bounds.maxX - 3 - inset, y: bounds.minY + 3))
+            path.line(to: NSPoint(x: bounds.maxX - 3, y: bounds.minY + 3 + inset))
+        }
+        path.lineWidth = 1
+        path.stroke()
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        zoom = min(6, max(1, zoom * (1 + event.scrollingDeltaY / 160)))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if resizeHandle.insetBy(dx: -6, dy: -6).contains(point) {
+            resizing = true
+            startSize = bounds.size
+            startPoint = point
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard resizing else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let size = NSSize(width: max(80, min(520, startSize.width + (point.x - startPoint.x))),
+                          height: max(60, min(520, startSize.height - (point.y - startPoint.y))))
+        onResize?(size)
+    }
+
+    override func mouseUp(with event: NSEvent) { resizing = false }
 }
 
 final class PhotoStripView: NSView {
@@ -389,13 +493,17 @@ final class PhotoStripView: NSView {
 
 final class FocusWindowController: NSWindowController, NSWindowDelegate {
     private let bigView = FocusImageView()
-    private let overview = NSImageView()
+    private let overview = OverviewView()
+    private let liveResumeField = NSTextField()
+    private var overviewWidth: NSLayoutConstraint?
+    private var overviewHeight: NSLayoutConstraint?
+    private var liveResumeTimer: DispatchWorkItem?
     private let strip = PhotoStripView()
     private let folderLabel = makeLabel("", size: 11, color: .secondaryLabelColor)
     private let statusLabel = makeLabel("waiting for a shot", size: 11)
     private let renameField = NSTextField()
     private let newFolderField = NSTextField()
-    private let ratioPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let overviewHint = makeLabel("scroll = zoom · drag corner = resize", size: 9, color: .tertiaryLabelColor)
     private let liveCheck = NSButton(checkboxWithTitle: "Live view", target: nil, action: nil)
     private let gridCheck = NSButton(checkboxWithTitle: "Grid overlay", target: nil, action: nil)
     private let zoomPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -464,6 +572,10 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         renameField.action = #selector(applyRename)
         let renameButton = makeButton("Rename", target: self, action: #selector(applyRename))
 
+        liveResumeField.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        liveResumeField.controlSize = .small
+        liveResumeField.stringValue = "3"
+        liveResumeField.widthAnchor.constraint(equalToConstant: 44).isActive = true
         liveCheck.target = self
         liveCheck.action = #selector(toggleLive)
         liveCheck.state = .off
@@ -476,10 +588,8 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         zoomPopup.target = self
         zoomPopup.action = #selector(zoomChanged)
 
-        ratioPopup.addItems(withTitles: ["Auto", "Horizontal", "Vertical"])
-        ratioPopup.controlSize = .small
-        ratioPopup.target = self
-        ratioPopup.action = #selector(ratioChanged)
+        overview.zoom = 1
+        overview.onResize = { [weak self] size in self?.resizeOverview(size) }
 
         for dot in [adbDot, syncDot] {
             dot.wantsLayer = true
@@ -499,7 +609,6 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         statusScroll.translatesAutoresizingMaskIntoConstraints = false
         statusScroll.heightAnchor.constraint(equalToConstant: 86).isActive = true
         statusScroll.widthAnchor.constraint(equalToConstant: 260).isActive = true
-        overview.imageScaling = .scaleProportionallyUpOrDown
         overview.wantsLayer = true
         overview.layer?.backgroundColor = NSColor.black.cgColor
         overview.layer?.cornerRadius = 4
@@ -524,11 +633,13 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
             statusLabel,
             makeSectionLabel("View"),
             liveCheck,
+            row([makeLabel("resume live after", size: 10, color: .secondaryLabelColor), liveResumeField,
+                 makeLabel("s", size: 10, color: .secondaryLabelColor)]),
             gridCheck,
             row([zoomPopup]),
             makeSectionLabel("Overview"),
-            row([ratioPopup]),
             overview,
+            overviewHint,
             makeSectionLabel("Transfer"),
             row([adbDot, adbLabel]),
             row([syncDot, syncLabel]),
@@ -540,12 +651,16 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
         left.addSubview(stack)
+        overviewWidth = overview.widthAnchor.constraint(equalToConstant: 220)
+        overviewHeight = overview.heightAnchor.constraint(equalToConstant: 150)
+        overviewWidth?.isActive = true
+        overviewHeight?.isActive = true
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: left.topAnchor, constant: 14),
             stack.leadingAnchor.constraint(equalTo: left.leadingAnchor, constant: 14),
             stack.trailingAnchor.constraint(equalTo: left.trailingAnchor, constant: -14),
-            overview.widthAnchor.constraint(equalToConstant: 190),
-            overview.heightAnchor.constraint(equalToConstant: 140),
+            overview.widthAnchor.constraint(greaterThanOrEqualToConstant: 90),
+            overview.heightAnchor.constraint(greaterThanOrEqualToConstant: 70),
             newFolderField.widthAnchor.constraint(equalToConstant: 140),
         ])
 
@@ -606,72 +721,53 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         bigView.overlay = ""
     }
 
-    func show(_ record: PhotoRecord) {
+    func show(_ record: PhotoRecord, isNew: Bool = false) {
         lastRecord = record
         guard let image = NSImage(contentsOf: record.url) else { return }
+        let wasLive = liveFramesEnabled
         liveFramesEnabled = false
         liveCheck.state = .off
         bigView.image = image
         bigView.overlay = ""
-        bigView.zoom = max(1, bigView.zoom)
-        updateOverview(image, aspect: record.width >= record.height ? .landscape : .portrait)
+        // zoom deliberately kept across photos
+        overview.image = image
+        overview.zoom = 1
+        if wasLive {
+            onLiveView?(false)
+            scheduleLiveResume()
+        }
         renameField.stringValue = (record.name as NSString).deletingPathExtension
         statusLabel.stringValue = "\(record.name) · \(record.width)×\(record.height) · \(Fmt.bytes(record.bytes))"
         window?.title = "sonyTether — Focus · \(record.name)"
     }
 
-    private enum Aspect { case landscape, portrait }
-
-    private func updateOverview(_ image: NSImage, aspect: Aspect) {
-        for dot in [adbDot, syncDot] {
-            dot.wantsLayer = true
-            dot.layer?.backgroundColor = NSColor.systemRed.cgColor
-            dot.layer?.cornerRadius = 4
-            dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.widthAnchor.constraint(equalToConstant: 8).isActive = true
-            dot.heightAnchor.constraint(equalToConstant: 8).isActive = true
-        }
-        statusLog.isEditable = false
-        statusLog.font = NSFont.monospacedSystemFont(ofSize: 9, weight: .regular)
-        statusLog.drawsBackground = true
-        statusLog.backgroundColor = .textBackgroundColor
-        let statusScroll = NSScrollView()
-        statusScroll.documentView = statusLog
-        statusScroll.hasVerticalScroller = true
-        statusScroll.translatesAutoresizingMaskIntoConstraints = false
-        statusScroll.heightAnchor.constraint(equalToConstant: 86).isActive = true
-        statusScroll.widthAnchor.constraint(equalToConstant: 260).isActive = true
-        overview.imageScaling = .scaleProportionallyUpOrDown
-        let choice = ratioPopup.titleOfSelectedItem ?? "Auto"
-        let vertical = choice == "Vertical" || (choice == "Auto" && aspect == .portrait)
-        if choice == "Vertical" {
-            overview.image = Self.rotated(image, degrees: 90)
-        } else if choice == "Horizontal" {
-            overview.image = image
-        } else {
-            overview.image = vertical ? Self.rotated(image, degrees: 90) : image
-        }
+    private func resizeOverview(_ size: NSSize) {
+        overviewWidth?.constant = size.width
+        overviewHeight?.constant = size.height
+        window?.contentView?.layoutSubtreeIfNeeded()
     }
 
-    /// Rotates a copy so the small overview can show a portrait crop of a
-    /// landscape frame.
-    static func rotated(_ image: NSImage, degrees: CGFloat) -> NSImage {
-        let radians = degrees * .pi / 180
-        let width = abs(cos(radians)) * image.size.width + abs(sin(radians)) * image.size.height
-        let height = abs(sin(radians)) * image.size.width + abs(cos(radians)) * image.size.height
-        let out = NSImage(size: NSSize(width: width, height: height))
-        out.lockFocus()
-        let transform = NSAffineTransform()
-        transform.translateX(by: width / 2, yBy: height / 2)
-        transform.rotate(byDegrees: degrees)
-        transform.translateX(by: -image.size.width / 2, yBy: -image.size.height / 2)
-        transform.concat()
-        image.draw(at: .zero, from: .zero, operation: .copy, fraction: 1)
-        out.unlockFocus()
-        return out
+    private func scheduleLiveResume() {
+        liveResumeTimer?.cancel()
+        let seconds = max(0.5, Double(liveResumeField.stringValue) ?? 3)
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.liveFramesEnabled = true
+            self.liveCheck.state = .on
+            self.onLiveView?(true)
+            self.bigView.overlay = "Live view"
+        }
+        liveResumeTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
     }
 
-    // MARK: Actions
+    /// Red frame around the window while the body is unreachable.
+    func setCameraConnected(_ connected: Bool) {
+        guard let content = window?.contentView else { return }
+        content.wantsLayer = true
+        content.layer?.borderWidth = connected ? 0 : 3
+        content.layer?.borderColor = NSColor.systemRed.cgColor
+    }
 
     @objc private func chooseFolder() { onChooseFolder?() }
 
@@ -739,12 +835,6 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     @objc private func zoomChanged() {
         let values: [CGFloat] = [1, 2, 3, 4, 6, 8]
         bigView.zoom = values[max(0, min(values.count - 1, zoomPopup.indexOfSelectedItem))]
-    }
-
-    @objc private func ratioChanged() {
-        if let record = lastRecord, let image = NSImage(contentsOf: record.url) {
-            updateOverview(image, aspect: record.width >= record.height ? .landscape : .portrait)
-        }
     }
 
     @objc private func transferChanged() {

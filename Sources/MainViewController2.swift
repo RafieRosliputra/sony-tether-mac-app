@@ -90,6 +90,8 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     private let adbTab = ADBTabView()
     private let syncTab = SyncTabView()
     private var restartTimer: Timer?
+    private var disconnectPanel: NSPanel?
+    private var everConnected = false
     private var captureArea = NSView()
     private let liveCard = NSView()
     private let logCard = NSView()
@@ -367,7 +369,11 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     private func wire() {
         camera.onStatus = { [weak self] status in
             guard let self else { return }
+            let wasConnected = self.captureStatus.connected
             self.captureStatus = status
+            if status.connected { self.everConnected = true }
+            self.updateConnectionChrome(connected: status.connected,
+                                        transition: wasConnected != status.connected)
             self.controls.update(status: status, controls: self.camera.controls, liveOn: self.liveOn)
             self.renderStatus(status)
             self.api.broadcast(["event": status.connected ? "connected" : "disconnected",
@@ -394,7 +400,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             self.photosView.setPhotos(self.photos)
             self.updateSessionUI()
             self.transfer.handle(record)
-            self.refreshFocusWindow(select: record)
+            self.refreshFocusWindow(select: record, isNew: true)
             self.api.broadcast(["event": "photo", "photo": self.json(for: record)])
         }
         camera.onScriptState = { [weak self] state in
@@ -412,7 +418,13 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         controls.onSet = { [weak self] name, value in self?.camera.setControl(name: name, value: value) }
         controls.onStep = { [weak self] name, dir in self?.camera.stepControl(name: name, direction: dir) }
 
-        filenamePanel.onChange = { [weak self] in self?.applySessionFromUI() }
+        filenamePanel.onChange = { [weak self] in
+            guard let self else { return }
+            if self.filenamePanel.prefixValue != self.prefs.filenamePrefix {
+                self.applyPrefix(self.filenamePanel.prefixValue)
+            }
+            self.applySessionFromUI()
+        }
         filenamePanel.onResyncBatch = { [weak self] in
             guard let self else { return }
             self.camera.session.batch += 1
@@ -466,6 +478,71 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         applySessionFromUI()
     }
 
+    // MARK: Connection chrome
+
+    /// Red frame on every window while the body is unreachable, plus a warning
+    /// panel that closes itself as soon as the camera answers again.
+    private func updateConnectionChrome(connected: Bool, transition: Bool) {
+        for window in [view.window, focusWindow?.window] {
+            guard let content = window?.contentView else { continue }
+            content.wantsLayer = true
+            content.layer?.borderWidth = connected ? 0 : 3
+            content.layer?.borderColor = NSColor.systemRed.cgColor
+        }
+        focusWindow?.setCameraConnected(connected)
+        if connected {
+            if let panel = disconnectPanel {
+                panel.close()
+                disconnectPanel = nil
+            }
+            return
+        }
+        if transition && everConnected && disconnectPanel == nil {
+            showDisconnectWarning()
+        }
+    }
+
+    private func showDisconnectWarning() {
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 130),
+                            styleMask: [.titled, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
+        panel.title = "Camera disconnected"
+        panel.level = .floating
+        panel.isFloatingPanel = true
+        panel.hidesOnDeactivate = false
+
+        let label = makeLabel("The camera stopped answering. Reconnect the USB cable — "
+            + "this notice closes by itself when the camera is back.", size: 11)
+        label.maximumNumberOfLines = 3
+        label.preferredMaxLayoutWidth = 320
+        label.lineBreakMode = .byWordWrapping
+        let button = makeButton("Reconnect", target: self, action: #selector(reconnectCamera))
+        let stack = NSStackView(views: [label, button])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        panel.contentView?.addSubview(stack)
+        if let content = panel.contentView {
+            NSLayoutConstraint.activate([
+                stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 14),
+                stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+                stack.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -16),
+            ])
+        }
+        if let window = view.window {
+            let frame = window.frame
+            panel.setFrameOrigin(NSPoint(x: frame.midX - 180, y: frame.maxY - 170))
+        }
+        panel.orderFront(nil)
+        disconnectPanel = panel
+    }
+
+    @objc private func reconnectCamera() {
+        camera.setConnected(false)
+        camera.setConnected(true)
+    }
+
     // MARK: Focus window
 
     func showFocusWindow() {
@@ -494,14 +571,14 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         focusWindow?.canGoBack = !folderStack.isEmpty
     }
 
-    private func refreshFocusWindow(select: PhotoRecord?) {
+    private func refreshFocusWindow(select: PhotoRecord?, isNew: Bool = false) {
         guard let focusWindow else { return }
         focusWindow.canGoBack = !folderStack.isEmpty
         focusWindow.update(folder: prefs.downloadDirectory,
                            session: camera.session.snapshot(),
                            photos: photos,
                            transfer: TransferStatusBroker.shared.summary)
-        if let select { focusWindow.show(select) }
+        if let select { focusWindow.show(select, isNew: isNew) }
     }
 
     private func createSubfolder(_ name: String) -> Bool {
@@ -697,12 +774,29 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             appNodeName: prefs.appNodeName
         ))
         filenamePanel.render(session: session, preview: preview)
+        let dir = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        let next = CameraService.nextSequence(prefix: prefs.filenamePrefix, in: dir)
+        filenamePanel.renderPrefixes(prefs.prefixHistory, current: prefs.filenamePrefix, nextNumber: next)
         statusRight.stringValue = [
             "Session \(session.number)",
             "Batch \(session.batch)",
             "Seq \(session.sequence)",
             api.isRunning ? "API on" : "API off",
         ].joined(separator: "  ·  ")
+    }
+
+    private func applyPrefix(_ value: String) {
+        let cleaned = NamePolicy.sanitize(value.trimmingCharacters(in: .whitespaces))
+        guard !cleaned.isEmpty else { return }
+        prefs.filenamePrefix = cleaned
+        if !prefs.prefixHistory.contains(cleaned) {
+            prefs.prefixHistory.append(cleaned)
+            if prefs.prefixHistory.count > 20 { prefs.prefixHistory.removeFirst() }
+        }
+        prefs.save()
+        camera.prefs = prefs
+        updateSessionUI()
+        Logger.shared.info("Filename prefix → \(cleaned) (next \(String(format: "%04d", CameraService.nextSequence(prefix: cleaned, in: URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)))))")
     }
 
     private func applySessionFromUI() {
@@ -747,13 +841,13 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     private func scheduleAutoRestart() {
         restartTimer?.invalidate()
         restartTimer = nil
-        guard prefs.adbRestartAppEnabled else { return }
-        let interval = TimeInterval(max(1, prefs.adbRestartAppMinutes) * 60)
-        Logger.shared.info("Auto restart every \(Int(interval / 60)) min")
+        guard prefs.adbRestartGalleryEnabled else { return }
+        let interval = TimeInterval(max(1, prefs.adbRestartGalleryMinutes) * 60)
+        Logger.shared.info("Phone gallery restart every \(Int(interval / 60)) min")
         restartTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            guard let self, self.prefs.adbRestartAppEnabled else { return }
-            Logger.shared.info("Auto restart: relaunching sonyTether")
-            self.restartApplication()
+            guard let self, self.prefs.adbRestartGalleryEnabled else { return }
+            Logger.shared.info("Restarting the gallery app on the phone")
+            self.transfer.adbRestartGallery()
         }
     }
 

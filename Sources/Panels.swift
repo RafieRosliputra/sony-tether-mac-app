@@ -11,6 +11,8 @@ final class FilenamePanel: NSView {
     let uniqueTagField = NSTextField()
     let barcodeField = NSTextField()
     let sequenceLabel = makeLabel("1", size: 11, weight: .medium)
+    let prefixCombo = NSComboBox()
+    let nextNumberLabel = makeLabel("", size: 11, weight: .medium)
     let expressionPreview = makeLabel("", size: 10, color: .secondaryLabelColor)
 
     private let numberStepper = NSStepper()
@@ -48,6 +50,13 @@ final class FilenamePanel: NSView {
             f.alignment = .right
         }
 
+        prefixCombo.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        prefixCombo.controlSize = .small
+        prefixCombo.completes = true
+        prefixCombo.numberOfVisibleItems = 8
+        prefixCombo.target = self
+        prefixCombo.action = #selector(changed)
+        prefixCombo.widthAnchor.constraint(equalToConstant: 150).isActive = true
         barcodeField.target = self
         barcodeField.action = #selector(barcodeEntered)
         sessionNameField.target = self
@@ -78,7 +87,10 @@ final class FilenamePanel: NSView {
 
         let resync = makeButton("Resync Batch Number", target: self, action: #selector(resyncBatch))
         let tagRow = row("Unique Tag", [uniqueTagField])
+        prefixCombo.translatesAutoresizingMaskIntoConstraints = false
         let stackRows: [NSView] = [
+            row("Prefix", [prefixCombo]),
+            row("Next file", [nextNumberLabel]),
             row("Session Name", [sessionNameField]),
             row("Session Number", [sessionNumberField, numberStepper]),
             row("Sequence", [sequenceLabel]),
@@ -115,6 +127,15 @@ final class FilenamePanel: NSView {
     @objc private func barcodeEntered() {
         onBarcode?(barcodeField.stringValue)
     }
+
+    func renderPrefixes(_ prefixes: [String], current: String, nextNumber: Int) {
+        prefixCombo.removeAllItems()
+        prefixCombo.addItems(withObjectValues: prefixes)
+        prefixCombo.stringValue = current
+        nextNumberLabel.stringValue = String(format: "%04d", nextNumber)
+    }
+
+    var prefixValue: String { prefixCombo.stringValue }
 
     func render(session: SessionSnapshot, preview: String) {
         sessionNameField.stringValue = session.name

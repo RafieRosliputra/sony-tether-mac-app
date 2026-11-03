@@ -127,6 +127,13 @@ Events: `hello`, `connected`, `disconnected`, `photo`, `script`.
 
 ---
 
+## Prefix naming (main window)
+
+The Filename panel has a **Prefix** combo with the prefixes you have used, plus
+the next number for that prefix. Names are `<prefix>-0001.JPG`; the sequence is
+read from the folder, so switching `sk` → `bd` → `sk` continues at `sk-0003`.
+Changing the prefix never renumbers, it just looks at what exists.
+
 ## Focus window
 
 `Display → New Display Window` (⇧⌘N) opens a second window you can drag to

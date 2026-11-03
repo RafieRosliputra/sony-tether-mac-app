@@ -156,7 +156,9 @@ final class ADBTabView: NSView {
     private let wirelessHost = NSTextField()
     private let wirelessPort = NSTextField()
     private let galleryPkg = NSTextField()
-    private let restartEnabled = NSButton(checkboxWithTitle: "Restart the app automatically", target: nil, action: nil)
+    private let restartEnabled = NSButton(checkboxWithTitle: "Restart the gallery app on the phone automatically", target: nil, action: nil)
+    private let fullBrightness = NSButton(checkboxWithTitle: "Force full brightness on the phone", target: nil, action: nil)
+    private let stayAwake = NSButton(checkboxWithTitle: "Keep the phone screen on (no sleep)", target: nil, action: nil)
     private let restartMinutes = NSTextField()
     private let status = makeLabel("", size: 10, color: .secondaryLabelColor)
     private let output = NSTextView()
@@ -170,6 +172,7 @@ final class ADBTabView: NSView {
 
     private func build() {
         for f in [adbPath, device, targetFolder, wirelessHost, wirelessPort, galleryPkg, restartMinutes] {
+            f.delegate = self
             f.font = NSFont.systemFont(ofSize: 11)
             f.controlSize = .small
             f.bezelStyle = .roundedBezel
@@ -182,7 +185,7 @@ final class ADBTabView: NSView {
         galleryPkg.widthAnchor.constraint(equalToConstant: 220).isActive = true
         restartMinutes.widthAnchor.constraint(equalToConstant: 50).isActive = true
 
-        for check in [enabled, autoPush, openAfter, restartEnabled] {
+        for check in [enabled, autoPush, openAfter, restartEnabled, fullBrightness, stayAwake] {
             check.target = self
             check.action = #selector(changed)
         }
@@ -234,7 +237,10 @@ final class ADBTabView: NSView {
             row("", [gallery, restartGallery]),
             makeSectionLabel("Maintenance"),
             row("", [deleteAll]),
-            makeSectionLabel("Auto restart"),
+            makeSectionLabel("Phone display"),
+            fullBrightness, stayAwake,
+            row("", [makeButton("Apply to phone", target: self, action: #selector(applyDisplaySettings))]),
+            makeSectionLabel("Auto restart (phone gallery)"),
             row("Every", [restartMinutes, makeLabel("minutes", size: 11)]),
             restartEnabled,
             status,
@@ -265,8 +271,10 @@ final class ADBTabView: NSView {
         wirelessHost.stringValue = p.adbWirelessHost
         wirelessPort.stringValue = "\(p.adbWirelessPort)"
         galleryPkg.stringValue = p.adbGalleryPackage
-        restartEnabled.state = p.adbRestartAppEnabled ? .on : .off
-        restartMinutes.stringValue = "\(p.adbRestartAppMinutes)"
+        restartEnabled.state = p.adbRestartGalleryEnabled ? .on : .off
+        restartMinutes.stringValue = "\(p.adbRestartGalleryMinutes)"
+        fullBrightness.state = p.adbFullBrightness ? .on : .off
+        stayAwake.state = p.adbStayAwake ? .on : .off
         status.stringValue = TransferStatusBroker.shared.summary
     }
 
@@ -281,8 +289,10 @@ final class ADBTabView: NSView {
         p.adbWirelessHost = wirelessHost.stringValue
         p.adbWirelessPort = Int(wirelessPort.stringValue) ?? 5555
         p.adbGalleryPackage = galleryPkg.stringValue
-        p.adbRestartAppEnabled = restartEnabled.state == .on
-        p.adbRestartAppMinutes = max(1, Int(restartMinutes.stringValue) ?? 5)
+        p.adbRestartGalleryEnabled = restartEnabled.state == .on
+        p.adbRestartGalleryMinutes = max(1, Int(restartMinutes.stringValue) ?? 5)
+        p.adbFullBrightness = fullBrightness.state == .on
+        p.adbStayAwake = stayAwake.state == .on
         onCommit?(p)
     }
 
@@ -320,12 +330,27 @@ final class ADBTabView: NSView {
         run("Delete all") { self.service?.adbDeleteAllOnDevice() ?? "" }
     }
 
+    @objc private func applyDisplaySettings() {
+        status.stringValue = "Applying display settings…"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = self.service?.adbApplyDisplaySettings() ?? ""
+            DispatchQueue.main.async {
+                self.status.stringValue = result.isEmpty ? "Display settings applied" : result
+                self.output.string += "display: \(result)\n"
+            }
+        }
+    }
+
     @objc private func listDevices() {
         run("Devices") {
             let devices = self.service?.adbDevices() ?? []
             return devices.isEmpty ? "no device attached" : devices.joined(separator: ", ")
         }
     }
+}
+
+extension ADBTabView: NSTextFieldDelegate {
+    func controlTextDidEndEditing(_ obj: Notification) { commit() }
 }
 
 // MARK: - Sync tab

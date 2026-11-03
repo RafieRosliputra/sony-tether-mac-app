@@ -85,6 +85,26 @@ private func runSelfTest() -> Int32 {
         ok = false
     }
 
+    // Prefix sequencing (hardware free)
+    let seqDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("sonyTether-seq-\(UUID().uuidString)")
+    do {
+        try FileManager.default.createDirectory(at: seqDir, withIntermediateDirectories: true)
+        for name in ["sk-0001.JPG", "sk-0002.JPG", "bd-0001.JPG"] {
+            try Data().write(to: seqDir.appendingPathComponent(name))
+        }
+        let nextSK = CameraService.nextSequence(prefix: "sk", in: seqDir)
+        let nextBD = CameraService.nextSequence(prefix: "bd", in: seqDir)
+        let nextNew = CameraService.nextSequence(prefix: "zz", in: seqDir)
+        let okSeq = nextSK == 3 && nextBD == 2 && nextNew == 1
+        print("prefix sequence: sk→\(nextSK), bd→\(nextBD), zz→\(nextNew) \(okSeq ? "OK" : "FAIL")")
+        if !okSeq { ok = false }
+        try? FileManager.default.removeItem(at: seqDir)
+    } catch {
+        print("prefix sequence: FAIL (\(error.localizedDescription))")
+        ok = false
+    }
+
     let dest = Preferences.load().downloadDirectory
     try? FileManager.default.createDirectory(atPath: dest, withIntermediateDirectories: true)
     let writable = FileManager.default.isWritableFile(atPath: dest)

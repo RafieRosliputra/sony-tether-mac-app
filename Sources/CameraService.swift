@@ -496,7 +496,19 @@ final class CameraService {
             session: namingSession,
             appNodeName: prefs.appNodeName
         )
-        let (subdir, fileName) = NamePolicy.resolve(expression: prefs.filenameExpression, context: context)
+        var (subdir, fileName) = NamePolicy.resolve(expression: prefs.filenameExpression, context: context)
+        // Prefix naming: <prefix>-0001.ext, continuing from whatever already
+        // exists for that prefix in the target folder.
+        let prefix = prefs.filenamePrefix.trimmingCharacters(in: .whitespaces)
+        if !prefix.isEmpty {
+            let root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+            var dir = root
+            if !subdir.isEmpty { dir = root.appendingPathComponent(subdir) }
+            let next = Self.nextSequence(prefix: prefix, in: dir)
+            Self.log.debug("prefix \(prefix) → next \(next) in \(dir.lastPathComponent)")
+            let ext = originalExt.isEmpty ? "JPG" : originalExt.uppercased()
+            fileName = String(format: "%@-%04d.%@", NamePolicy.sanitize(prefix), next, ext)
+        }
 
         let root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
         var dir = root
@@ -594,6 +606,21 @@ final class CameraService {
                            aperture: aperture, shutter: shutter, iso: iso,
                            focalLength: focal, bytes: bytes, capturedAt: capturedAt,
                            uniqueTag: namingSession.uniqueTag, barcode: namingSession.barcode)
+    }
+
+    /// Highest existing `<prefix>-NNNN` in the folder, +1.
+    static func nextSequence(prefix: String, in dir: URL) -> Int {
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return 1 }
+        let head = prefix + "-"
+        var highest = 0
+        for name in files where name.hasPrefix(head) {
+            let rest = name.dropFirst(head.count)
+            let digits = rest.prefix { $0.isNumber }
+            if let value = Int(String(digits)), value > highest {
+                highest = value
+            }
+        }
+        return highest + 1
     }
 
     // MARK: Scripts
