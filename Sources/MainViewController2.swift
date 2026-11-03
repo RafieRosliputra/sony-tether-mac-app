@@ -16,27 +16,23 @@ final class LiveViewerView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.setFill()
         bounds.fill()
-        guard let image else {
+        guard let image, image.size.width > 0 else {
             drawOverlay()
             return
         }
-        let size = image.size
-        guard size.width > 0, size.height > 0 else { return }
+        let angle = CGFloat(rotation) * .pi / 180
         let rotated = rotation % 180 == 90
-        let target = rotated ? NSSize(width: size.height, height: size.width) : size
-        let fit = min(bounds.width / target.width, bounds.height / target.height) * zoom
-        let w = target.width * fit
-        let h = target.height * fit
-        let rect = NSRect(x: (bounds.width - w) / 2 + pan.x, y: (bounds.height - h) / 2 + pan.y,
-                          width: w, height: h)
+        let box = rotated ? NSSize(width: image.size.height, height: image.size.width) : image.size
+        let fit = max(bounds.width / box.width, bounds.height / box.height) * zoom
+        let drawSize = NSSize(width: image.size.width * fit, height: image.size.height * fit)
 
         NSGraphicsContext.saveGraphicsState()
-        let transform = NSAffineTransform()
-        transform.translateX(by: rect.midX, yBy: rect.midY)
-        transform.rotate(byDegrees: CGFloat(rotation))
-        transform.translateX(by: -rect.midX, yBy: -rect.midY)
-        transform.concat()
-        image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+        let ctx = NSGraphicsContext.current!.cgContext
+        ctx.translateBy(x: bounds.midX + pan.x, y: bounds.midY + pan.y)
+        ctx.rotate(by: angle)
+        image.draw(in: NSRect(x: -drawSize.width / 2, y: -drawSize.height / 2,
+                              width: drawSize.width, height: drawSize.height),
+                   from: .zero, operation: .sourceOver, fraction: 1)
         NSGraphicsContext.restoreGraphicsState()
 
         if showGrid {

@@ -333,6 +333,9 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
     var liveFolder: URL?
     private var quickLookItem: URL?
     private var quickLookPanel: QLPreviewPanel?
+    private var globalIndex: [String: Int] = [:]
+    private var globalTotal = 0
+    private var latestPath: String?
 
     private let folderTable = NSTableView()
     private let folderScroll = NSScrollView()
@@ -353,6 +356,31 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Numbers every image in the live folder (recursively) by capture time, so
+    /// a file keeps its number even after it is moved into a subfolder.
+    func refreshIndex() {
+        guard let live = liveFolder else { return }
+        var items: [(URL, Date)] = []
+        if let enumerator = FileManager.default.enumerator(at: live,
+                                                           includingPropertiesForKeys: [.creationDateKey],
+                                                           options: [.skipsHiddenFiles]) {
+            for case let url as URL in enumerator {
+                if url.pathComponents.contains(TransferService.webpFolderName) { continue }
+                let ext = url.pathExtension.lowercased()
+                guard ["jpg", "jpeg", "png", "tif", "tiff"].contains(ext) else { continue }
+                let date = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
+                items.append((url, date))
+            }
+        }
+        items.sort { $0.1 < $1.1 }
+        globalIndex.removeAll()
+        for (i, item) in items.enumerated() {
+            globalIndex[item.0.standardizedFileURL.path] = i + 1
+        }
+        globalTotal = items.count
+        latestPath = items.last?.0.standardizedFileURL.path
+    }
+
     func setRoot(_ url: URL) {
         root = url
         rootFolder = url
@@ -370,6 +398,7 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         }
         folders = list
         folderTable.reloadData()
+        refreshIndex()
     }
 
     private func build() {
@@ -454,6 +483,7 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
 
     func setPhotos(_ list: [PhotoRecord]) {
         photos = list
+        if globalTotal == 0 { refreshIndex() }
         table.reloadData()
         summary.stringValue = "\(list.count) photos · \(Fmt.bytes(list.reduce(0) { $0 + $1.bytes }))"
     }
@@ -512,7 +542,8 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         case "tag": text = p.uniqueTag
         case "bytes": text = Fmt.bytes(p.bytes)
         case "counter":
-            text = row == photos.count - 1 ? "\(row + 1)/\(photos.count)" : "\(row + 1)"
+            let index = globalIndex[p.url.standardizedFileURL.path] ?? (row + 1)
+            text = "\(index)/\(max(globalTotal, index))"
         default: text = ""
         }
         let id = NSUserInterfaceItemIdentifier("cell")
@@ -525,12 +556,13 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
             cell.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
         }
         cell.stringValue = text
+        let isLatest = p.url.standardizedFileURL.path == latestPath
         if column.identifier.rawValue == "name" {
-            cell.textColor = row == photos.count - 1 ? .systemRed : .labelColor
+            cell.textColor = isLatest ? .systemRed : .labelColor
             cell.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5,
-                                                         weight: row == photos.count - 1 ? .semibold : .regular)
+                                                         weight: isLatest ? .semibold : .regular)
         } else if column.identifier.rawValue == "counter" {
-            cell.textColor = row == photos.count - 1 ? .systemRed : .secondaryLabelColor
+            cell.textColor = isLatest ? .systemRed : .secondaryLabelColor
         }
         return cell
     }

@@ -469,6 +469,7 @@ final class FocusImageView: NSView {
     var image: NSImage? { didSet { needsDisplay = true } }
     var showGrid = true { didSet { needsDisplay = true } }
     var zoom: CGFloat = 1 { didSet { needsDisplay = true } }
+    var rotation: Int = 0 { didSet { needsDisplay = true } }
     var overlay = "" { didSet { needsDisplay = true } }
 
     private var offset: NSPoint = .zero
@@ -504,7 +505,20 @@ final class FocusImageView: NSView {
         let target = NSRect(x: frame.midX - scaled.width / 2 + panX,
                             y: frame.midY - scaled.height / 2 + panY,
                             width: scaled.width, height: scaled.height)
-        image.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1)
+        if rotation == 0 {
+            image.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1)
+        } else {
+            let ctx = NSGraphicsContext.current!.cgContext
+            ctx.saveGState()
+            ctx.translateBy(x: target.midX, y: target.midY)
+            ctx.rotate(by: CGFloat(rotation) * .pi / 180)
+            let rotated = rotation % 180 == 90
+            let w = rotated ? target.height : target.width
+            let h = rotated ? target.width : target.height
+            image.draw(in: NSRect(x: -w / 2, y: -h / 2, width: w, height: h),
+                       from: .zero, operation: .sourceOver, fraction: 1)
+            ctx.restoreGState()
+        }
 
         if showGrid {
             NSColor.white.withAlphaComponent(0.28).setStroke()
@@ -630,7 +644,7 @@ final class OverviewView: NSView {
         NSColor.black.setFill()
         bounds.fill()
         guard let image else { return }
-        let viewport = aspectRect
+        let viewport = bounds
         let fit = max(viewport.width / image.size.width, viewport.height / image.size.height) * zoom
         let size = NSSize(width: image.size.width * fit, height: image.size.height * fit)
         let rect = NSRect(x: viewport.midX - size.width / 2 + offset.x,
@@ -971,6 +985,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
             row([makeLabel("resume live after", size: 10, color: .secondaryLabelColor), liveResumeField,
                  makeLabel("s", size: 10, color: .secondaryLabelColor)]),
             gridCheck,
+            row([makeButton("Rotate live", target: self, action: #selector(rotateLive))]),
             row([zoomPopup]),
             makeSectionLabel("Overview"),
             overview,
@@ -1217,6 +1232,10 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         } else if let record = lastRecord {
             show(record)
         }
+    }
+
+    @objc private func rotateLive() {
+        bigView.rotation = (bigView.rotation + 90) % 360
     }
 
     @objc private func toggleGrid() {
