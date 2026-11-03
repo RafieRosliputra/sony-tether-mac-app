@@ -73,6 +73,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     private var photos: [PhotoRecord] = []
     private let transfer: TransferService
     private var focusWindow: FocusWindowController?
+    private var clientView: ClientViewWindowController?
     private var folderStack: [String] = []
 
     // Panels
@@ -401,6 +402,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             self.updateSessionUI()
             self.transfer.handle(record)
             self.refreshFocusWindow(select: record, isNew: true)
+            self.clientView?.show(image: NSImage(contentsOf: record.url))
             self.api.broadcast(["event": "photo", "photo": self.json(for: record)])
         }
         camera.onScriptState = { [weak self] state in
@@ -553,6 +555,10 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             w.onRename = { [weak self] record, name in self?.rename(record, to: name) ?? false }
             w.onLiveView = { [weak self] on in self?.setLiveView(on) }
             w.onBack = { [weak self] in self?.goBackFolder() }
+            w.onFocusMain = { [weak self] in
+                NSApp.activate(ignoringOtherApps: true)
+                self?.view.window?.makeKeyAndOrderFront(nil)
+            }
             focusWindow = w
         }
         refreshFocusWindow(select: photos.last)
@@ -684,6 +690,17 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     func revealSessionFolder() {
         let url = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    func showClientView() {
+        if clientView == nil {
+            let controller = ClientViewWindowController()
+            controller.onClose = { [weak self] in self?.clientView = nil }
+            clientView = controller
+        }
+        let image = photos.last.flatMap { NSImage(contentsOf: $0.url) }
+        clientView?.show(image: image)
+        Logger.shared.info("Client View opened on \(NSScreen.screens.count > 1 ? "second display" : "main display")")
     }
 
     func showPhotos() {

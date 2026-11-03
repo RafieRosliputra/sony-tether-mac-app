@@ -51,6 +51,44 @@ final class TransferService {
         }
     }
 
+    /// Keeps the server copy in step when a shot is renamed or moved.
+    func propagateRename(from old: URL, to new: URL) {
+        let prefs = self.prefs
+        queue.async { [weak self] in
+            guard let self else { return }
+            if prefs.transferSyncEnabled {
+                let folder = (prefs.syncFolder as NSString).expandingTildeInPath
+                let root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+                func relative(_ url: URL, ext: String) -> String {
+                    var path = url.path
+                    if path.hasPrefix(root.path) { path = String(path.dropFirst(root.path.count)) }
+                    return (path as NSString).deletingPathExtension + "." + ext
+                }
+                let oldTarget = URL(fileURLWithPath: folder).appendingPathComponent(relative(old, ext: "webp"))
+                let newTarget = URL(fileURLWithPath: folder).appendingPathComponent(relative(new, ext: "webp"))
+                if FileManager.default.fileExists(atPath: oldTarget.path) {
+                    try? FileManager.default.createDirectory(at: newTarget.deletingLastPathComponent(),
+                                                             withIntermediateDirectories: true)
+                    try? FileManager.default.moveItem(at: oldTarget, to: newTarget)
+                    self.log.info("Sync: moved \(oldTarget.lastPathComponent) → \(newTarget.lastPathComponent)")
+                } else if let record = PhotoRecord(url: new, name: new.lastPathComponent,
+                                                   camera: "", node: "", batch: 0, sessionNumber: 0,
+                                                   sessionName: "", width: 0, height: 0, format: "",
+                                                   aperture: "", shutter: "", iso: "", focalLength: "",
+                                                   bytes: 0, capturedAt: Date(), uniqueTag: "", barcode: "") as PhotoRecord? {
+                    self.sync(record, prefs: prefs)
+                }
+            }
+            if prefs.transferADBEnabled, let adb = self.adbBinary, let serial = self.adbDevices().first {
+                let target = prefs.adbTargetFolder
+                let oldRemote = target + "/" + (old.lastPathComponent as NSString).deletingPathExtension + ".webp"
+                let newRemote = target + "/" + (new.lastPathComponent as NSString).deletingPathExtension + ".webp"
+                _ = self.run(adb, ["-s", serial, "shell", "mv", oldRemote, newRemote])
+                self.log.info("ADB: moved \(oldRemote) → \(newRemote)")
+            }
+        }
+    }
+
     func pushLast(_ record: PhotoRecord) {
         let prefs = self.prefs
         queue.async { [weak self] in self?.adbPush(record, prefs: prefs) }
@@ -129,6 +167,32 @@ final class TransferService {
     }
 
     @discardableResult
+    func adbScrcpy() -> String {
+        guard let scrcpy = ["/opt/homebrew/bin/scrcpy", "/usr/local/bin/scrcpy"]
+            .first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            return "scrcpy not installed (brew install scrcpy)"
+        }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: scrcpy)
+        p.arguments = ["--no-audio"]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return "scrcpy failed: \(error.localizedDescription)" }
+        log.info("scrcpy launched")
+        return "scrcpy launched"
+    }
+
+    @discardableResult
+    func adbPullToRefresh() -> String {
+        guard let adb = adbBinary, let serial = adbDevices().first else { return "no device" }
+        // Swipe from mid-screen downwards, not from the very top (that opens the
+        // notification shade).
+        let out = run(adb, ["-s", serial, "shell", "input", "swipe", "540", "700", "540", "1500", "300"])
+        log.info("ADB pull-to-refresh")
+        return out
+    }
+
+    @discardableResult
     func adbApplyDisplaySettings() -> String {
         guard let adb = adbBinary, let serial = adbDevices().first else { return "no device" }
         var out = ""
@@ -154,6 +218,23 @@ final class TransferService {
         }
     }
 
+    /// Android and the server both want WebP; convert with cwebp.
+    func webpVersion(of record: PhotoRecord) -> URL? {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sonyTether-webp", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let base = (record.name as NSString).deletingPathExtension
+        let target = dir.appendingPathComponent(base + ".webp")
+        if !FileManager.default.fileExists(atPath: target.path) {
+            let result = run("/opt/homebrew/bin/cwebp",
+                             ["-quiet", "-q", "85", record.url.path, "-o", target.path])
+            if !FileManager.default.fileExists(atPath: target.path) {
+                log.warn("WebP conversion failed: \(result)")
+                return nil
+            }
+        }
+        return target
+    }
+
     private func adbPush(_ record: PhotoRecord, prefs: Preferences) {
         guard let adb = adbBinary else {
             lastADBStatus = "adb not found"
@@ -173,8 +254,13 @@ final class TransferService {
             return
         }
         let target = prefs.adbTargetFolder.isEmpty ? "/sdcard/DCIM/sonyTether" : prefs.adbTargetFolder
-        let remote = target.hasSuffix("/") ? target + record.name : target + "/" + record.name
-        let output = run(adb, ["-s", serial, "push", record.url.path, remote])
+        guard let webp = webpVersion(of: record) else {
+            lastADBStatus = "webp failed"
+            log.warn("ADB: skipped \(record.name), WebP conversion failed")
+            return
+        }
+        let remote = target.hasSuffix("/") ? target + webp.lastPathComponent : target + "/" + webp.lastPathComponent
+        let output = run(adb, ["-s", serial, "push", webp.path, remote])
         if output.lowercased().contains("error") || output.lowercased().contains("failed") {
             lastADBStatus = "push failed"
             log.warn("ADB push failed: \(output.trimmingCharacters(in: .whitespacesAndNewlines))")
@@ -199,16 +285,23 @@ final class TransferService {
         } else {
             relative = "/" + record.name
         }
-        let target = URL(fileURLWithPath: folder).appendingPathComponent(relative)
+        let webpName = (record.name as NSString).deletingPathExtension + ".webp"
+        let relativeWebp = (relative as NSString).deletingPathExtension + ".webp"
+        let target = URL(fileURLWithPath: folder).appendingPathComponent(relativeWebp)
+        guard let webp = webpVersion(of: record) else {
+            lastSyncStatus = "webp failed"
+            log.warn("Sync: skipped \(record.name), WebP conversion failed")
+            return
+        }
         do {
             try FileManager.default.createDirectory(at: target.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: target.path) {
                 try? FileManager.default.removeItem(at: target)
             }
-            try FileManager.default.copyItem(at: record.url, to: target)
-            lastSyncStatus = "synced \(record.name)"
-            log.info("Sync: \(record.name) → \(target.path)")
+            try FileManager.default.copyItem(at: webp, to: target)
+            lastSyncStatus = "synced \(webpName)"
+            log.info("Sync: \(webpName) → \(target.path)")
         } catch {
             lastSyncStatus = "sync failed"
             log.warn("Sync failed for \(record.name): \(error.localizedDescription)")
@@ -258,6 +351,8 @@ final class FocusImageView: NSView {
 
     private var offset: NSPoint = .zero
     private var dragStart: NSPoint?
+    private var lastZoom: CGFloat = 1
+    private var lastOffset: NSPoint = .zero
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -320,11 +415,38 @@ final class FocusImageView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         let factor = 1 + event.scrollingDeltaY / 120
-        zoom = min(8, max(1, zoom * factor))
-        if zoom == 1 { offset = .zero }
+        zoomAroundMouse(factor: factor, event: event)
+    }
+
+    override func magnify(with event: NSEvent) {
+        zoomAroundMouse(factor: 1 + event.magnification, event: event)
+    }
+
+    private func zoomAroundMouse(factor: CGFloat, event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let center = NSPoint(x: bounds.midX, y: bounds.midY)
+        let newZoom = max(0.1, zoom * factor)
+        let ratio = newZoom / zoom
+        offset = NSPoint(x: (offset.x + (point.x - center.x)) * ratio - (point.x - center.x),
+                         y: (offset.y + (point.y - center.y)) * ratio - (point.y - center.y))
+        zoom = newZoom
     }
 
     override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            // toggle fit ↔ previous zoom/position
+            if zoom > 1.001 || offset != .zero {
+                lastZoom = zoom
+                lastOffset = offset
+                zoom = 1
+                offset = .zero
+            } else {
+                zoom = lastZoom
+                offset = lastOffset
+            }
+            needsDisplay = true
+            return
+        }
         dragStart = event.locationInWindow
     }
 
@@ -341,9 +463,6 @@ final class FocusImageView: NSView {
         dragStart = nil
     }
 
-    override func magnify(with event: NSEvent) {
-        zoom = min(8, max(1, zoom * (1 + event.magnification)))
-    }
 
 }
 
@@ -351,6 +470,7 @@ final class OverviewView: NSView {
     var image: NSImage? { didSet { needsDisplay = true } }
     var zoom: CGFloat = 1 { didSet { needsDisplay = true } }
     var onResize: ((NSSize) -> Void)?
+    var aspect: CGFloat = 3.0 / 2.0 { didSet { needsDisplay = true } }
 
     private var resizing = false
     private var startSize = NSSize.zero
@@ -361,6 +481,19 @@ final class OverviewView: NSView {
         addCursorRect(resizeHandle, cursor: .crosshair)
     }
 
+    /// The print aspect box inside the view.
+    private var aspectRect: NSRect {
+        let available = bounds.insetBy(dx: 2, dy: 2)
+        var width = available.width
+        var height = width / aspect
+        if height > available.height {
+            height = available.height
+            width = height * aspect
+        }
+        return NSRect(x: available.midX - width / 2, y: available.midY - height / 2,
+                      width: width, height: height)
+    }
+
     private var resizeHandle: NSRect {
         NSRect(x: bounds.maxX - 14, y: bounds.minY, width: 14, height: 14)
     }
@@ -369,12 +502,14 @@ final class OverviewView: NSView {
         NSColor.black.setFill()
         bounds.fill()
         guard let image else { return }
-        let fit = min(bounds.width / image.size.width, bounds.height / image.size.height) * zoom
+        let viewport = aspectRect
+        let fit = min(viewport.width / image.size.width, viewport.height / image.size.height) * zoom
         let size = NSSize(width: image.size.width * fit, height: image.size.height * fit)
-        let rect = NSRect(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2,
+        let rect = NSRect(x: viewport.midX - size.width / 2 + offset.x,
+                          y: viewport.midY - size.height / 2 + offset.y,
                           width: size.width, height: size.height)
         NSGraphicsContext.saveGraphicsState()
-        NSBezierPath(rect: bounds).addClip()
+        NSBezierPath(rect: viewport).addClip()
         image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
         NSGraphicsContext.restoreGraphicsState()
 
@@ -390,28 +525,64 @@ final class OverviewView: NSView {
         path.stroke()
     }
 
+    private var offset: NSPoint = .zero
+    private var dragStart: NSPoint?
+    private var dragged = false
+
     override func scrollWheel(with event: NSEvent) {
-        zoom = min(6, max(1, zoom * (1 + event.scrollingDeltaY / 160)))
+        let point = convert(event.locationInWindow, from: nil)
+        let center = NSPoint(x: bounds.midX, y: bounds.midY)
+        let factor = 1 + event.scrollingDeltaY / 160
+        let newZoom = max(0.2, zoom * factor)
+        let ratio = newZoom / zoom
+        offset = NSPoint(x: (offset.x + (point.x - center.x)) * ratio - (point.x - center.x),
+                         y: (offset.y + (point.y - center.y)) * ratio - (point.y - center.y))
+        zoom = newZoom
+    }
+
+    override func magnify(with event: NSEvent) {
+        zoom = max(0.2, zoom * (1 + event.magnification))
     }
 
     override func mouseDown(with event: NSEvent) {
+        dragged = false
         let point = convert(event.locationInWindow, from: nil)
         if resizeHandle.insetBy(dx: -6, dy: -6).contains(point) {
             resizing = true
             startSize = bounds.size
             startPoint = point
+            return
         }
+        dragStart = point
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if resizing { resizing = false; return }
+        if !dragged {
+            // click = reset to fit
+            zoom = 1
+            offset = .zero
+            needsDisplay = true
+        }
+        dragStart = nil
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard resizing else { return }
         let point = convert(event.locationInWindow, from: nil)
-        let size = NSSize(width: max(80, min(520, startSize.width + (point.x - startPoint.x))),
-                          height: max(60, min(520, startSize.height - (point.y - startPoint.y))))
-        onResize?(size)
+        if resizing {
+            let size = NSSize(width: max(80, min(520, startSize.width + (point.x - startPoint.x))),
+                              height: max(60, min(520, startSize.height - (point.y - startPoint.y))))
+            onResize?(size)
+            return
+        }
+        guard let start = dragStart else { return }
+        dragged = true
+        offset.x += point.x - start.x
+        offset.y += point.y - start.y
+        dragStart = point
+        needsDisplay = true
     }
 
-    override func mouseUp(with event: NSEvent) { resizing = false }
 }
 
 final class PhotoStripView: NSView {
@@ -503,6 +674,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     private let statusLabel = makeLabel("waiting for a shot", size: 11)
     private let renameField = NSTextField()
     private let newFolderField = NSTextField()
+    private let aspectPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let overviewHint = makeLabel("scroll = zoom · drag corner = resize", size: 9, color: .tertiaryLabelColor)
     private let liveCheck = NSButton(checkboxWithTitle: "Live view", target: nil, action: nil)
     private let gridCheck = NSButton(checkboxWithTitle: "Grid overlay", target: nil, action: nil)
@@ -523,6 +695,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     var onNewFolder: ((String) -> Bool)?
     var onRename: ((PhotoRecord, String) -> Bool)?
     var onBack: (() -> Void)?
+    var onFocusMain: (() -> Void)?
     var canGoBack = false
     var liveFramesEnabled = false
 
@@ -590,6 +763,10 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
 
         overview.zoom = 1
         overview.onResize = { [weak self] size in self?.resizeOverview(size) }
+        aspectPopup.addItems(withTitles: ["Free", "2:3", "3:2", "4:5", "5:4", "3:4", "4:3"])
+        aspectPopup.controlSize = .small
+        aspectPopup.target = self
+        aspectPopup.action = #selector(aspectChanged)
 
         for dot in [adbDot, syncDot] {
             dot.wantsLayer = true
@@ -638,6 +815,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
             gridCheck,
             row([zoomPopup]),
             makeSectionLabel("Overview"),
+            row([aspectPopup, makeButton("Main view", target: self, action: #selector(focusMainView))]),
             overview,
             overviewHint,
             makeSectionLabel("Transfer"),
@@ -771,6 +949,26 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func chooseFolder() { onChooseFolder?() }
 
+    @objc private func focusMainView() { onFocusMain?() }
+
+    @objc private func aspectChanged() {
+        let ratios: [CGFloat] = [1.5, 2.0/3.0, 1.5, 0.8, 1.25, 0.75, 4.0/3.0]
+        let index = max(0, aspectPopup.indexOfSelectedItem)
+        if index == 0 {
+            overviewWidth?.constant = 220
+            overviewHeight?.constant = 150
+            overview.aspect = 220.0 / 150.0
+            window?.contentView?.layoutSubtreeIfNeeded()
+            return
+        }
+        let ratio = ratios[index]
+        overview.aspect = ratio
+        let width: CGFloat = 220
+        overviewWidth?.constant = width
+        overviewHeight?.constant = width / ratio
+        window?.contentView?.layoutSubtreeIfNeeded()
+    }
+
     @objc private func goBack() {
         guard canGoBack else { return }
         onBack?()
@@ -856,5 +1054,53 @@ final class TransferStatusBroker {
     func append(_ line: String) {
         logLines.append(line)
         if logLines.count > 6 { logLines.removeFirst() }
+    }
+}
+
+
+// MARK: - Client view (clean preview for a second display)
+
+final class ClientViewWindowController: NSWindowController {
+    private let canvas = FocusImageView()
+    private var keyMonitor: Any?
+    var onClose: (() -> Void)?
+
+    convenience init() {
+        let secondary = NSScreen.screens.count > 1 ? NSScreen.screens[1] : nil
+        let frame = secondary?.frame ?? NSRect(x: 0, y: 0, width: 720, height: 480)
+        let window = NSWindow(contentRect: frame,
+                              styleMask: secondary == nil ? [.titled, .closable, .resizable] : [.borderless],
+                              backing: .buffered, defer: false)
+        window.title = "sonyTether — Client View"
+        window.backgroundColor = .black
+        window.isReleasedWhenClosed = false
+        if let secondary {
+            window.setFrame(secondary.frame, display: true)
+            window.collectionBehavior = [.fullScreenAuxiliary, .ignoresCycle]
+        }
+        self.init(window: window)
+        canvas.frame = window.contentView?.bounds ?? frame
+        canvas.autoresizingMask = [.width, .height]
+        canvas.showGrid = false
+        window.contentView?.addSubview(canvas)
+        window.makeFirstResponder(canvas)
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            if event.keyCode == 53 && event.modifierFlags.contains(.command) { self?.closeClient(); return nil }
+            return event
+        }
+    }
+
+    func show(image: NSImage?) {
+        if let image { canvas.image = image }
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
+        window?.makeFirstResponder(canvas)
+    }
+
+    private func closeClient() {
+        if let monitor = keyMonitor { NSEvent.removeMonitor(monitor) }
+        keyMonitor = nil
+        window?.close()
+        onClose?()
     }
 }

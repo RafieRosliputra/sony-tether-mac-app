@@ -86,6 +86,7 @@ final class FilenamePanel: NSView {
         }
 
         let resync = makeButton("Resync Batch Number", target: self, action: #selector(resyncBatch))
+        let resyncNames = makeButton("Resync next number", target: self, action: #selector(resyncNames))
         let tagRow = row("Unique Tag", [uniqueTagField])
         prefixCombo.translatesAutoresizingMaskIntoConstraints = false
         let stackRows: [NSView] = [
@@ -98,6 +99,7 @@ final class FilenamePanel: NSView {
             tagRow,
             row("Barcode", [barcodeField]),
             resync,
+            resyncNames,
             expressionPreview,
         ]
 
@@ -124,6 +126,7 @@ final class FilenamePanel: NSView {
     @objc private func changed() { onChange?() }
     @objc private func stepperChanged() { onChange?() }
     @objc private func resyncBatch() { onResyncBatch?() }
+    @objc private func resyncNames() { onChange?() }
     @objc private func barcodeEntered() {
         onBarcode?(barcodeField.stringValue)
     }

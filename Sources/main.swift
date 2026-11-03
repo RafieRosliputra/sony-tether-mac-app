@@ -225,7 +225,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let displayItem = NSMenuItem()
         mainMenu.addItem(displayItem)
         let displayMenu = NSMenu(title: "Display")
-        displayMenu.addItem(withTitle: "New Display Window", action: #selector(showDisplayWindow), keyEquivalent: "n").keyEquivalentModifierMask = [.command, .shift]
+        displayMenu.addItem(withTitle: "Photographer View", action: #selector(showDisplayWindow), keyEquivalent: "n").keyEquivalentModifierMask = [.command, .shift]
+        displayMenu.addItem(withTitle: "Client View", action: #selector(showClientView), keyEquivalent: "m").keyEquivalentModifierMask = [.command, .shift]
         displayMenu.addItem(withTitle: "Toggle Log Viewer", action: #selector(toggleLog), keyEquivalent: "j")
         displayMenu.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f").keyEquivalentModifierMask = [.command, .control]
         displayItem.submenu = displayMenu
@@ -314,6 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func stopScript() { controller.stopScript() }
     @objc private func toggleLog() { controller.toggleLog() }
     @objc private func showDisplayWindow() { controller.showFocusWindow() }
+    @objc private func showClientView() { controller.showClientView() }
     @objc private func syncAllNow() { controller.syncAllNow() }
     @objc private func adbPushLast() { controller.adbPushLast() }
     @objc private func adbDevices() { controller.adbDevicesToList() }

@@ -237,6 +237,9 @@ final class ADBTabView: NSView {
             row("", [gallery, restartGallery]),
             makeSectionLabel("Maintenance"),
             row("", [deleteAll]),
+            makeSectionLabel("Phone control"),
+            row("", [makeButton("Open scrcpy", target: self, action: #selector(openScrcpy)),
+                     makeButton("Pull to refresh", target: self, action: #selector(pullToRefresh))]),
             makeSectionLabel("Phone display"),
             fullBrightness, stayAwake,
             row("", [makeButton("Apply to phone", target: self, action: #selector(applyDisplaySettings))]),
@@ -328,6 +331,14 @@ final class ADBTabView: NSView {
         alert.alertStyle = .warning
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         run("Delete all") { self.service?.adbDeleteAllOnDevice() ?? "" }
+    }
+
+    @objc private func openScrcpy() {
+        run("scrcpy") { self.service?.adbScrcpy() ?? "" }
+    }
+
+    @objc private func pullToRefresh() {
+        run("Pull to refresh") { self.service?.adbPullToRefresh() ?? "" }
     }
 
     @objc private func applyDisplaySettings() {
