@@ -468,6 +468,18 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         photosView.onChooseFolder = { [weak self] in self?.chooseBrowseFolder() }
         photosView.onBrowseFolder = { [weak self] in self?.chooseBrowseFolder() }
         photosView.onConvertPush = { [weak self] record in self?.convertAndPush(record) }
+        photosView.onSelectFolder = { [weak self] folder in
+            self?.photosView.showFolder(folder)
+            Logger.shared.info("Photos: showing \(folder.lastPathComponent)")
+        }
+        photosView.onNewFolderIn = { [weak self] parent in self?.createFolder(in: parent) }
+        photosView.onDeleteFolder = { [weak self] folder in self?.deleteFolder(folder) }
+        photosView.onSyncFolder = { [weak self] in
+            guard let self else { return }
+            self.transfer.mirrorSyncAsync()
+            if let root = self.photosRoot { self.photosView.scanFolder(root) }
+            Logger.shared.info("Sync Folder requested")
+        }
         photosView.onMove = { [weak self] urls, folder in
             self?.movePhotos(urls, to: folder)
         }
@@ -843,6 +855,56 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             focusWindow?.lastRecord = last
         }
         return true
+    }
+
+    private func createFolder(in parent: URL) {
+        let alert = NSAlert()
+        alert.messageText = "New folder"
+        alert.informativeText = "Created inside \(parent.lastPathComponent). New captures go there."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 22))
+        field.placeholderString = "folder name"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = NamePolicy.sanitize(field.stringValue.trimmingCharacters(in: .whitespaces))
+        guard !name.isEmpty else { return }
+        let target = parent.appendingPathComponent(name)
+        do {
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        } catch {
+            Logger.shared.warn("Could not create folder: \(error.localizedDescription)")
+            return
+        }
+        prefs.downloadDirectory = target.path
+        prefs.save()
+        camera.prefs = prefs
+        photosRoot = target
+        photosView.scanFolder(target)
+        updateSessionUI()
+        Logger.shared.info("New capture folder → \(target.path)")
+    }
+
+    private func deleteFolder(_ folder: URL) {
+        let root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        guard folder.standardizedFileURL != root.standardizedFileURL else {
+            Logger.shared.warn("Refusing to delete the live capture folder")
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Delete \(folder.lastPathComponent)?"
+        alert.informativeText = "The folder and its files go to the Trash."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            try FileManager.default.trashItem(at: folder, resultingItemURL: nil)
+            if let root = photosRoot { photosView.scanFolder(root) }
+            Logger.shared.info("Folder deleted: \(folder.lastPathComponent)")
+        } catch {
+            Logger.shared.warn("Delete failed: \(error.localizedDescription)")
+        }
     }
 
     func chooseBrowseFolder() {

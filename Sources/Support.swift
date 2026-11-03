@@ -39,7 +39,7 @@ func widgetString(_ get: (UnsafeMutablePointer<UnsafePointer<CChar>?>) -> Int32)
 
 enum AppInfo {
     static let name = "sonyTether"
-    static let version = "0.10.0"
+    static let version = "0.11.0"
     static let build = "1"
     static let bundleID = "com.johorstudio.sonytether"
     static let repoURL = "https://github.com/RafieRosliputra/sony-tether-mac-app"

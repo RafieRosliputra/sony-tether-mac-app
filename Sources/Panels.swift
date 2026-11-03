@@ -323,6 +323,11 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
     var onMove: (([URL], URL) -> Void)?
     var onConvertPush: ((PhotoRecord) -> Void)?
     var onBrowseFolder: (() -> Void)?
+    var onSelectFolder: ((URL) -> Void)?
+    var onNewFolderIn: ((URL) -> Void)?
+    var onDeleteFolder: ((URL) -> Void)?
+    var onSyncFolder: (() -> Void)?
+    var rootFolder: URL?
     private var browseRoot: URL?
 
     private let folderTable = NSTableView()
@@ -346,6 +351,7 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
 
     func setRoot(_ url: URL) {
         root = url
+        rootFolder = url
         var list: [URL] = [url]
         if let enumerator = FileManager.default.enumerator(at: url,
                                                            includingPropertiesForKeys: [.isDirectoryKey],
@@ -371,10 +377,20 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         folderTable.delegate = self
         folderTable.rowHeight = 18
         folderTable.registerForDraggedTypes([.fileURL])
+        NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            guard let self, self.window?.isKeyWindow == true, event.keyCode == 49 else { return event }
+            guard self.window?.firstResponder === self.table else { return event }
+            let row = self.table.selectedRow
+            guard row >= 0, row < self.photos.count else { return event }
+            self.openInPreview(self.photos[row])
+            return nil
+        }
+        folderTable.target = self
+        folderTable.action = #selector(folderClicked)
         folderScroll.documentView = folderTable
         folderScroll.hasVerticalScroller = true
         folderScroll.translatesAutoresizingMaskIntoConstraints = false
-        folderScroll.widthAnchor.constraint(equalToConstant: 210).isActive = true
+        folderScroll.widthAnchor.constraint(equalToConstant: 280).isActive = true
         addSubview(folderScroll)
 
         for (id, title, width) in columns {
@@ -386,6 +402,7 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         table.dataSource = self
         table.delegate = self
         table.usesAlternatingRowBackgroundColors = true
+        table.allowsMultipleSelection = true
         table.rowHeight = 20
         table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         table.target = self
@@ -393,6 +410,9 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         let menu = NSMenu()
         menu.delegate = self
         table.menu = menu
+        let folderMenu = NSMenu()
+        folderMenu.delegate = self
+        folderTable.menu = folderMenu
 
         scroll.documentView = table
         scroll.hasVerticalScroller = true
@@ -401,7 +421,8 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         let reveal = makeButton("Show in Finder", target: self, action: #selector(revealSelected))
         let open = makeButton("Open", target: self, action: #selector(openSelected))
         let folder = makeButton("Choose Folder…", target: self, action: #selector(chooseFolder))
-        let buttons = NSStackView(views: [open, reveal, folder])
+        let syncFolder = makeButton("Sync Folder", target: self, action: #selector(syncFolderAction))
+        let buttons = NSStackView(views: [open, reveal, folder, syncFolder])
         buttons.orientation = .horizontal
         buttons.spacing = 6
         buttons.translatesAutoresizingMaskIntoConstraints = false
@@ -510,6 +531,27 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if menu === folderTable.menu {
+            let row = folderTable.clickedRow
+            let folder = (row >= 0 && row < folders.count) ? folders[row] : root
+            let newFolder = NSMenuItem(title: "New Folder…", action: #selector(newFolderAction), keyEquivalent: "")
+            newFolder.target = self
+            menu.addItem(newFolder)
+            let browse = NSMenuItem(title: "Show Files in This Folder", action: #selector(folderClicked), keyEquivalent: "")
+            browse.target = self
+            menu.addItem(browse)
+            let reveal = NSMenuItem(title: "Show in Finder", action: #selector(revealFolderAction), keyEquivalent: "")
+            reveal.target = self
+            menu.addItem(reveal)
+            if let folder, folder.standardizedFileURL != root?.standardizedFileURL {
+                let delete = NSMenuItem(title: "Delete Folder", action: #selector(deleteFolderAction), keyEquivalent: "")
+                delete.target = self
+                menu.addItem(NSMenuItem.separator())
+                menu.addItem(delete)
+            }
+            _ = folder
+            return
+        }
         let row = table.selectedRow
         let hasRow = row >= 0 && row < photos.count
         let convert = NSMenuItem(title: "Convert to WebP & push to Android", action: #selector(convertPush), keyEquivalent: "")
@@ -530,6 +572,26 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         menu.addItem(choose)
     }
 
+    @objc private func newFolderAction() {
+        let row = folderTable.clickedRow
+        let folder = (row >= 0 && row < folders.count) ? folders[row] : root
+        guard let folder else { return }
+        onNewFolderIn?(folder)
+    }
+
+    @objc private func revealFolderAction() {
+        let row = folderTable.clickedRow
+        let folder = (row >= 0 && row < folders.count) ? folders[row] : root
+        guard let folder else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([folder])
+    }
+
+    @objc private func deleteFolderAction() {
+        let row = folderTable.clickedRow
+        guard row >= 0, row < folders.count else { return }
+        onDeleteFolder?(folders[row])
+    }
+
     @objc private func convertPush() {
         let row = table.selectedRow
         guard row >= 0, row < photos.count else { return }
@@ -537,6 +599,36 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
     }
 
     @objc private func browseFolderAction() { onBrowseFolder?() }
+
+    /// Shows only the files directly inside `folder`.
+    func showFolder(_ folder: URL) {
+        guard let items = try? FileManager.default.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: [.fileSizeKey, .creationDateKey],
+            options: [.skipsHiddenFiles]) else { return }
+        var found: [(URL, Date, Int)] = []
+        for url in items {
+            if url.pathComponents.contains(TransferService.webpFolderName) { continue }
+            let ext = url.pathExtension.lowercased()
+            guard ["jpg", "jpeg", "png", "tif", "tiff"].contains(ext) else { continue }
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .creationDateKey])
+            found.append((url, values?.creationDate ?? Date.distantPast, values?.fileSize ?? 0))
+        }
+        found.sort { $0.1 < $1.1 }
+        setPhotos(found.map { item in
+            PhotoRecord(url: item.0, name: item.0.lastPathComponent, camera: "", node: "",
+                        batch: 0, sessionNumber: 0, sessionName: "", width: 0, height: 0,
+                        format: item.0.pathExtension.uppercased(), aperture: "", shutter: "",
+                        iso: "", focalLength: "", bytes: item.2, capturedAt: item.1,
+                        uniqueTag: "", barcode: "")
+        })
+    }
+
+    func openInPreview(_ record: PhotoRecord) {
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        let preview = URL(fileURLWithPath: "/System/Applications/Preview.app")
+        NSWorkspace.shared.open([record.url], withApplicationAt: preview, configuration: config)
+    }
 
     /// Lists every image in the folder (not just this session's shots).
     func scanFolder(_ root: URL) {
@@ -564,6 +656,12 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         setRoot(root)
     }
 
+    @objc private func folderClicked() {
+        let row = folderTable.clickedRow >= 0 ? folderTable.clickedRow : folderTable.selectedRow
+        guard row >= 0, row < folders.count else { return }
+        onSelectFolder?(folders[row])
+    }
+
     @objc private func openSelected() {
         let row = table.selectedRow
         guard row >= 0, row < photos.count else { return }
@@ -577,6 +675,7 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
     }
 
     @objc private func chooseFolder() { onChooseFolder?() }
+    @objc private func syncFolderAction() { onSyncFolder?() }
 }
 
 // MARK: - Log pane

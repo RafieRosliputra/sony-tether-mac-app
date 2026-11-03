@@ -91,6 +91,31 @@ final class TransferService {
         }
     }
 
+    /// Writes a copy of the JPEG with the EXIF orientation applied, so the
+    /// WebP keeps the correct rotation.
+    static func orientedJPEG(_ url: URL) -> URL? {
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [String: Any]
+        let orientation = props?[kCGImagePropertyOrientation as String] as? Int ?? 1
+        if orientation == 1 { return url }
+        let width = props?[kCGImagePropertyPixelWidth as String] as? Int ?? 0
+        let height = props?[kCGImagePropertyPixelHeight as String] as? Int ?? 0
+        let maxPixel = max(width, height)
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, options as CFDictionary) else { return nil }
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sonyTether-orient-\(UUID().uuidString).jpg")
+        guard let dest = CGImageDestinationCreateWithURL(out as CFURL, "public.jpeg" as CFString, 1, nil) else {
+            return nil
+        }
+        CGImageDestinationAddImage(dest, cg, [kCGImageDestinationLossyCompressionQuality: 1.0] as CFDictionary)
+        return CGImageDestinationFinalize(dest) ? out : nil
+    }
+
     /// Fire-and-forget variant so the UI thread never waits on cwebp.
     func mirrorSyncAsync() {
         queue.async { [weak self] in _ = self?.mirrorSync() }
@@ -300,8 +325,11 @@ final class TransferService {
         let base = (record.name as NSString).deletingPathExtension
         let target = dir.appendingPathComponent(base + ".webp")
         if !FileManager.default.fileExists(atPath: target.path) {
+            // cwebp drops EXIF, so portrait shots arrived un-rotated on the
+            // phone. Bake the orientation into pixels first.
+            let source = Self.orientedJPEG(record.url) ?? record.url
             let result = run("/opt/homebrew/bin/cwebp",
-                             ["-quiet", "-q", "50", record.url.path, "-o", target.path])
+                             ["-quiet", "-q", "50", source.path, "-o", target.path])
             if !FileManager.default.fileExists(atPath: target.path) {
                 log.warn("WebP conversion failed: \(result)")
                 return nil
@@ -459,7 +487,7 @@ final class FocusImageView: NSView {
         }
         // The photo keeps a fixed letterboxed frame; zoom and pan happen
         // inside it, so nothing spills over the rest of the window.
-        let fit = min(bounds.width / image.size.width, bounds.height / image.size.height)
+        let fit = max(bounds.width / image.size.width, bounds.height / image.size.height)
         let baseSize = NSSize(width: image.size.width * fit, height: image.size.height * fit)
         let frame = NSRect(x: (bounds.width - baseSize.width) / 2,
                            y: (bounds.height - baseSize.height) / 2,
@@ -597,7 +625,7 @@ final class OverviewView: NSView {
         bounds.fill()
         guard let image else { return }
         let viewport = aspectRect
-        let fit = min(viewport.width / image.size.width, viewport.height / image.size.height) * zoom
+        let fit = max(viewport.width / image.size.width, viewport.height / image.size.height) * zoom
         let size = NSSize(width: image.size.width * fit, height: image.size.height * fit)
         let rect = NSRect(x: viewport.midX - size.width / 2 + offset.x,
                           y: viewport.midY - size.height / 2 + offset.y,
@@ -681,6 +709,7 @@ final class OverviewView: NSView {
 
 final class PhotoStripView: NSView {
     var onSelect: ((PhotoRecord) -> Void)?
+    private var selectedIndex = -1
     private var photos: [PhotoRecord] = []
     private let scroll = NSScrollView()
     private let stack = NSStackView()
@@ -716,6 +745,15 @@ final class PhotoStripView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    func setSelected(_ index: Int) {
+        selectedIndex = index
+        for (i, view) in stack.arrangedSubviews.enumerated() {
+            guard let button = view as? NSButton else { continue }
+            button.layer?.borderWidth = i == index ? 3 : 0
+            button.layer?.borderColor = NSColor.systemYellow.cgColor
+        }
+    }
+
     func setPhotos(_ list: [PhotoRecord]) {
         photos = list
         for view in stack.arrangedSubviews {
@@ -732,9 +770,13 @@ final class PhotoStripView: NSView {
             button.toolTip = record.name
             button.widthAnchor.constraint(equalToConstant: 84).isActive = true
             button.heightAnchor.constraint(equalToConstant: 68).isActive = true
+            button.wantsLayer = true
+            button.layer?.cornerRadius = 2
+            button.layer?.borderColor = NSColor.systemYellow.cgColor
             stack.addArrangedSubview(button)
         }
         _ = selectedID
+        setSelected(selectedIndex)
     }
 
     @objc private func selectPhoto(_ sender: NSButton) {
@@ -763,6 +805,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     private var overviewWidth: NSLayoutConstraint?
     private var overviewHeight: NSLayoutConstraint?
     private var liveResumeTimer: DispatchWorkItem?
+    private var keyMonitor: Any?
     private let strip = PhotoStripView()
     private let folderLabel = makeLabel("", size: 11, color: .secondaryLabelColor)
     private let statusLabel = makeLabel("waiting for a shot", size: 11)
@@ -982,6 +1025,14 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         ])
         NotificationCenter.default.addObserver(self, selector: #selector(transferChanged),
                                               name: .transferStatus, object: nil)
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            guard let self, self.window?.isKeyWindow == true else { return event }
+            switch event.keyCode {
+            case 123: self.stepPhoto(-1); return nil   // left
+            case 124: self.stepPhoto(1); return nil    // right
+            default: return event
+            }
+        }
     }
 
     // MARK: Data
@@ -1006,7 +1057,19 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         bigView.overlay = ""
     }
 
+    private func stepPhoto(_ delta: Int) {
+        guard !photos.isEmpty else { return }
+        let current = lastRecord.flatMap { record in photos.firstIndex { $0.id == record.id } } ?? -1
+        var next = current + delta
+        if next < 0 { next = photos.count - 1 }
+        if next >= photos.count { next = 0 }
+        show(photos[next])
+    }
+
     func show(_ record: PhotoRecord, isNew: Bool = false) {
+        if let index = photos.firstIndex(where: { $0.id == record.id }) {
+            strip.setSelected(index)
+        }
         lastRecord = record
         guard let image = NSImage(contentsOf: record.url) else { return }
         let wasLive = liveFramesEnabled
