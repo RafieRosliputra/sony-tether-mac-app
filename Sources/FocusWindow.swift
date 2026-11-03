@@ -486,50 +486,42 @@ final class FocusImageView: NSView {
             drawOverlay()
             return
         }
-        // The photo keeps a fixed letterboxed frame; zoom and pan happen
-        // inside it, so nothing spills over the rest of the window.
-        let fit = max(bounds.width / image.size.width, bounds.height / image.size.height)
-        let baseSize = NSSize(width: image.size.width * fit, height: image.size.height * fit)
-        let frame = NSRect(x: (bounds.width - baseSize.width) / 2,
-                           y: (bounds.height - baseSize.height) / 2,
-                           width: baseSize.width, height: baseSize.height)
+        let odd = rotation % 180 == 90
+        let effective = odd ? NSSize(width: image.size.height, height: image.size.width) : image.size
+        // fill the view (no letterbox); zoom is relative to that fill
+        let base = max(bounds.width / effective.width, bounds.height / effective.height)
+        let scale = base * zoom
+        let draw = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+        let box = odd ? NSSize(width: draw.height, height: draw.width) : draw
+
+        // keep the pan inside the picture
+        let maxX = max(0, (box.width - bounds.width) / 2)
+        let maxY = max(0, (box.height - bounds.height) / 2)
+        offset.x = min(maxX, max(-maxX, offset.x))
+        offset.y = min(maxY, max(-maxY, offset.y))
 
         NSGraphicsContext.saveGraphicsState()
-        NSBezierPath(rect: frame).addClip()
-
-        let scaled = NSSize(width: frame.width * zoom, height: frame.height * zoom)
-        let maxX = max(0, (scaled.width - frame.width) / 2)
-        let maxY = max(0, (scaled.height - frame.height) / 2)
-        let panX = min(maxX, max(-maxX, offset.x))
-        let panY = min(maxY, max(-maxY, offset.y))
-        let target = NSRect(x: frame.midX - scaled.width / 2 + panX,
-                            y: frame.midY - scaled.height / 2 + panY,
-                            width: scaled.width, height: scaled.height)
-        if rotation == 0 {
-            image.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1)
-        } else {
-            let ctx = NSGraphicsContext.current!.cgContext
-            ctx.saveGState()
-            ctx.translateBy(x: target.midX, y: target.midY)
-            ctx.rotate(by: CGFloat(rotation) * .pi / 180)
-            let rotated = rotation % 180 == 90
-            let w = rotated ? target.height : target.width
-            let h = rotated ? target.width : target.height
-            image.draw(in: NSRect(x: -w / 2, y: -h / 2, width: w, height: h),
-                       from: .zero, operation: .sourceOver, fraction: 1)
-            ctx.restoreGState()
-        }
+        NSBezierPath(rect: bounds).addClip()
+        let ctx = NSGraphicsContext.current!.cgContext
+        ctx.translateBy(x: bounds.midX + offset.x, y: bounds.midY + offset.y)
+        if rotation != 0 { ctx.rotate(by: CGFloat(rotation) * .pi / 180) }
+        image.draw(in: NSRect(x: -draw.width / 2, y: -draw.height / 2,
+                              width: draw.width, height: draw.height),
+                   from: .zero, operation: .sourceOver, fraction: 1)
 
         if showGrid {
             NSColor.white.withAlphaComponent(0.28).setStroke()
             let path = NSBezierPath()
+            var gx = -draw.width / 2
+            var gy = -draw.height / 2
+            if odd { swap(&gx, &gy) }
             for i in 1..<3 {
-                let x = frame.minX + frame.width * CGFloat(i) / 3
-                path.move(to: NSPoint(x: x, y: frame.minY))
-                path.line(to: NSPoint(x: x, y: frame.maxY))
-                let y = frame.minY + frame.height * CGFloat(i) / 3
-                path.move(to: NSPoint(x: frame.minX, y: y))
-                path.line(to: NSPoint(x: frame.maxX, y: y))
+                let x = gx + draw.width * CGFloat(i) / 3
+                path.move(to: NSPoint(x: x, y: gy))
+                path.line(to: NSPoint(x: x, y: gy + draw.height))
+                let y = gy + draw.height * CGFloat(i) / 3
+                path.move(to: NSPoint(x: gx, y: y))
+                path.line(to: NSPoint(x: gx + draw.width, y: y))
             }
             path.lineWidth = 1
             path.stroke()
@@ -566,12 +558,16 @@ final class FocusImageView: NSView {
 
     private func zoomAroundMouse(factor: CGFloat, event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        let center = NSPoint(x: bounds.midX, y: bounds.midY)
-        let newZoom = max(0.1, zoom * factor)
+        let newZoom = max(0.05, min(40, zoom * factor))
         let ratio = newZoom / zoom
-        offset = NSPoint(x: (offset.x + (point.x - center.x)) * ratio - (point.x - center.x),
-                         y: (offset.y + (point.y - center.y)) * ratio - (point.y - center.y))
+        guard ratio != 1 else { return }
+        // keep the pixel under the pointer fixed
+        let dx = point.x - bounds.midX
+        let dy = point.y - bounds.midY
+        offset = NSPoint(x: dx - (dx - offset.x) * ratio,
+                         y: dy - (dy - offset.y) * ratio)
         zoom = newZoom
+        needsDisplay = true
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -861,6 +857,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     var onBack: (() -> Void)?
     var onFocusMain: (() -> Void)?
     var onStatusToggle: ((String) -> Void)?
+    var onActiveChanged: ((Bool) -> Void)?
     var canGoBack = false
     var liveFramesEnabled = false
 

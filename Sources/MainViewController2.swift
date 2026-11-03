@@ -112,6 +112,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     private var folderStack: [String] = []
     private var photosRoot: URL?
     private var autoSyncTimer: Timer?
+    private var pausedLiveForPView = false
 
     // Panels
     private let controls = CameraControlsView()
@@ -791,6 +792,13 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             w.onLiveView = { [weak self] on in self?.setLiveView(on) }
             w.onBack = { [weak self] in self?.goBackFolder() }
             w.onStatusToggle = { [weak self] key in self?.handleStatusToggle(key) }
+            w.onActiveChanged = { [weak self] active in
+                guard let self else { return }
+                if active {
+                    // pview is in front: free the camera preview for it
+                    if self.liveOn { self.setLiveView(false); self.pausedLiveForPView = true }
+                }
+            }
             w.onFocusMain = { [weak self] in
                 NSApp.activate(ignoringOtherApps: true)
                 self?.view.window?.makeKeyAndOrderFront(nil)
