@@ -176,10 +176,11 @@ tools/icon.swift                 icon generator
 
 On an ILCE-7RM3, firmware 3.0, macOS 27.2 arm64, with the camera connected:
 
-- connect, live view 1024×680 ~10–13 fps
-- three paced captures, sequence `0001 → 0003`, 7952×5304 JPEG, 6 MB each
-- timelapse 3 frames (4 s interval) — completed
+- connect, live view 1024×680 at 10–13 fps
+- paced captures, sequence `0001 → 0004`, 7952×5304 JPEG ≈ 6 MB each
+- timelapse 2 frames at 8 s — completed, status "Done · 2 frames"
 - API: `status`, `set iso=400`, `capture`, `script`
+- Photos tab lists every capture with camera metadata (aperture, shutter, ISO, size, tag, bytes)
 - `ptpcamerad` eviction on the first connect after a cable replug
 - watchdog reports `Camera stopped responding during capture` instead of
   pretending the camera is absent
