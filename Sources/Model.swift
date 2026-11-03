@@ -323,3 +323,15 @@ extension NSLock {
         return try body()
     }
 }
+
+
+/// Shared live-view transform so the main window and Photographer View show the
+/// same zoom and rotation.
+enum LiveTransform {
+    static var zoom: CGFloat = 1
+    static var rotation: Int = 0
+}
+
+extension Notification.Name {
+    static let liveTransformChanged = Notification.Name("sonyTether.liveTransformChanged")
+}

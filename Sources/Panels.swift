@@ -343,7 +343,7 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
     private var root: URL?
 
     private let columns: [(String, String, CGFloat)] = [
-        ("name", "Name", 210), ("counter", "Count", 60), ("time", "Time", 70), ("size", "Size", 90),
+        ("name", "Name", 210), ("counter", "Count", 60), ("folder", "Folder", 90), ("time", "Time", 70), ("size", "Size", 90),
         ("format", "Format", 60), ("aperture", "Aperture", 66), ("shutter", "Shutter", 66),
         ("iso", "ISO", 50), ("batch", "Batch", 50), ("session", "Session", 60),
         ("tag", "Tag", 90), ("bytes", "Bytes", 70),
@@ -541,6 +541,21 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         case "session": text = "\(p.sessionNumber)"
         case "tag": text = p.uniqueTag
         case "bytes": text = Fmt.bytes(p.bytes)
+        case "folder":
+            if let live = liveFolder {
+                let livePath = live.standardizedFileURL.path
+                let path = p.url.standardizedFileURL.path
+                let parent = p.url.deletingLastPathComponent().standardizedFileURL.path
+                if parent == livePath {
+                    text = "root"
+                } else if path.hasPrefix(livePath) {
+                    text = String(path.dropFirst(livePath.count))
+                } else {
+                    text = parent
+                }
+            } else {
+                text = "—"
+            }
         case "counter":
             let index = globalIndex[p.url.standardizedFileURL.path] ?? (row + 1)
             text = "\(index)/\(max(globalTotal, index))"

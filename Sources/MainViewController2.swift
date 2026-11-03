@@ -1256,12 +1256,16 @@ final class MainViewController: NSViewController, NSWindowDelegate {
 
     @objc private func zoomChanged() {
         liveView.zoom = CGFloat(zoomPopup.indexOfSelectedItem + 1)
+        LiveTransform.zoom = liveView.zoom
+        NotificationCenter.default.post(name: .liveTransformChanged, object: nil)
     }
 
     @objc private func toggleGrid() { liveView.showGrid = gridCheck.state == .on }
 
     @objc private func rotateLive() {
         liveView.rotation = (liveView.rotation + 90) % 360
+        LiveTransform.rotation = liveView.rotation
+        NotificationCenter.default.post(name: .liveTransformChanged, object: nil)
     }
 
     @objc private func enterFullScreen() {

@@ -1048,6 +1048,12 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         ])
         NotificationCenter.default.addObserver(self, selector: #selector(transferChanged),
                                               name: .transferStatus, object: nil)
+        NotificationCenter.default.addObserver(forName: .liveTransformChanged, object: nil,
+                                               queue: .main) { [weak self] _ in
+            guard let self, self.liveFramesEnabled else { return }
+            self.bigView.zoom = LiveTransform.zoom
+            self.bigView.rotation = LiveTransform.rotation
+        }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self, self.window?.isKeyWindow == true else { return event }
             switch event.keyCode {
@@ -1077,6 +1083,10 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     func setLiveFrame(_ image: NSImage) {
         guard liveFramesEnabled else { return }
         bigView.image = image
+        if liveFramesEnabled {
+            bigView.zoom = LiveTransform.zoom
+            bigView.rotation = LiveTransform.rotation
+        }
         bigView.overlay = ""
     }
 
@@ -1099,6 +1109,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         liveFramesEnabled = false
         liveCheck.state = .off
         bigView.image = image
+        bigView.rotation = 0
         bigView.overlay = ""
         // zoom deliberately kept across photos
         overview.image = image
@@ -1235,7 +1246,9 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func rotateLive() {
-        bigView.rotation = (bigView.rotation + 90) % 360
+        LiveTransform.rotation = (LiveTransform.rotation + 90) % 360
+        bigView.rotation = LiveTransform.rotation
+        NotificationCenter.default.post(name: .liveTransformChanged, object: nil)
     }
 
     @objc private func toggleGrid() {
