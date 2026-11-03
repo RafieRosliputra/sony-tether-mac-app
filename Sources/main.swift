@@ -162,9 +162,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         camera.start()
+        GlobalShortcuts.shared.handler = { [weak self] action in
+            self?.perform(action)
+        }
+        GlobalShortcuts.shared.reload()
         NotificationCenter.default.addObserver(forName: .shortcutsChanged, object: nil,
                                                queue: .main) { [weak self] _ in
             self?.buildMenu()
+            GlobalShortcuts.shared.reload()
         }
         Logger.shared.info("UI ready · \(AppInfo.name) \(AppInfo.version)")
     }
@@ -329,6 +334,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         p.arguments = ["-n", url.path]
         try? p.run()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { NSApp.terminate(nil) }
+    }
+
+    private func perform(_ action: AppAction) {
+        switch action {
+        case .capture: capture()
+        case .autofocus: autoFocus()
+        case .liveView: controller.toggleLiveView()
+        case .focusWindow: showDisplayWindow()
+        case .syncAll: syncAllNow()
+        case .adbPush: adbPushLast()
+        case .showPhotos: showPhotos()
+        case .showCapture: showCapture()
+        case .toggleLog: toggleLog()
+        case .preferences: showPreferences()
+        case .restartApp: restartApp()
+        }
     }
 
     @objc private func openRepo() {

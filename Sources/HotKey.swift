@@ -38,13 +38,8 @@ struct CaptureShortcut: Equatable {
         return s + keyLabel
     }
 
-    /// Function keys are allowed without modifiers, everything else needs one.
-    var isValid: Bool {
-        if mouseButton != nil { return true }
-        guard keyCode != nil else { return false }
-        if !modifierFlags.isEmpty { return true }
-        return keyLabel.hasPrefix("F") && (Int(keyLabel.dropFirst()) ?? 0) >= 1
-    }
+    /// Any key or extra mouse button is accepted — modifiers are optional.
+    var isValid: Bool { keyCode != nil || mouseButton != nil }
 
     // MARK: Persistence
 
@@ -328,14 +323,14 @@ final class ShortcutRecorderViewController: NSViewController {
                                        mouseButton: nil)
         }
         guard shortcut.isValid else {
-            valueLabel.stringValue = "add a modifier"
-            noteLabel.stringValue = "Needs ⌘, ⌥, ⌃ or ⇧ — unless it is an F-key."
+            valueLabel.stringValue = "waiting…"
             saveButton.isEnabled = false
             return
         }
         captured = shortcut
         valueLabel.stringValue = shortcut.display
-        noteLabel.stringValue = "Works even when sonyTether is in the background."
+        noteLabel.stringValue = "Global — works while sonyTether is in the background."
+    _ = noteLabel
         saveButton.isEnabled = true
     }
 

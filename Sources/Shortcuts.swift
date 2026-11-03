@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 
 /// A menu action whose key equivalent the user can change.
 enum AppAction: String, CaseIterable {
@@ -41,8 +42,23 @@ enum AppAction: String, CaseIterable {
 struct MenuShortcut: Equatable {
     var key: String
     var modifiers: NSEvent.ModifierFlags
+    var mouseButton: Int?
+
+    init(key: String, modifiers: NSEvent.ModifierFlags, mouseButton: Int? = nil) {
+        self.key = key
+        self.modifiers = modifiers
+        self.mouseButton = mouseButton
+    }
 
     var display: String {
+        if let mouseButton {
+            switch mouseButton {
+            case 2: return "Mouse · middle"
+            case 3: return "Mouse · back"
+            case 4: return "Mouse · forward"
+            default: return "Mouse · button \(mouseButton)"
+            }
+        }
         var s = ""
         if modifiers.contains(.control) { s += "⌃" }
         if modifiers.contains(.option) { s += "⌥" }
@@ -80,9 +96,14 @@ final class ShortcutStore {
     func shortcut(for action: AppAction) -> MenuShortcut? {
         if let raw = overrides[action.rawValue] {
             if raw["cleared"] as? Bool == true { return nil }
-            if let key = raw["key"] as? String {
+            let mouse = raw["mouse"] as? Int ?? -1
+            if let key = raw["key"] as? String, !key.isEmpty {
                 let mods = NSEvent.ModifierFlags(rawValue: UInt(raw["mods"] as? Int ?? 0))
-                return MenuShortcut(key: key, modifiers: mods)
+                return MenuShortcut(key: key, modifiers: mods,
+                                    mouseButton: mouse >= 0 ? mouse : nil)
+            }
+            if mouse >= 0 {
+                return MenuShortcut(key: "", modifiers: [], mouseButton: mouse)
             }
         }
         if action == .preferences { return action.defaultShortcut }
@@ -94,6 +115,7 @@ final class ShortcutStore {
             overrides[action.rawValue] = [
                 "key": shortcut.key,
                 "mods": Int(shortcut.modifiers.rawValue),
+                "mouse": shortcut.mouseButton ?? -1,
             ]
         } else {
             overrides[action.rawValue] = ["cleared": true]
@@ -153,5 +175,117 @@ final class ShortcutStore {
             item.keyEquivalent = ""
             item.keyEquivalentModifierMask = []
         }
+    }
+}
+
+
+/// Registers every configured action as a system-wide trigger: Carbon hot key
+/// for keyboard chords (works with no modifiers too), NSEvent monitor for the
+/// extra mouse buttons.
+final class GlobalShortcuts {
+    static let shared = GlobalShortcuts()
+    var handler: ((AppAction) -> Void)?
+
+    private var hotKeyRefs: [EventHotKeyRef] = []
+    private var mouseMonitors: [Any] = []
+    private var actionForID: [UInt32: AppAction] = [:]
+    private var actionForMouse: [Int: AppAction] = [:]
+    private var installed = false
+    private static let signature: OSType = 0x536E_7953 // 'SnyS'
+
+    func reload() {
+        unregister()
+        installHandlerIfNeeded()
+        var nextID: UInt32 = 1
+        for action in AppAction.allCases {
+            guard let shortcut = ShortcutStore.shared.shortcut(for: action) else { continue }
+            if let mouse = shortcut.mouseButton {
+                actionForMouse[mouse] = action
+                continue
+            }
+            guard let keyCode = Self.keyCode(for: shortcut.key) else { continue }
+            var ref: EventHotKeyRef?
+            let id = EventHotKeyID(signature: Self.signature, id: nextID)
+            var mods: UInt32 = 0
+            if shortcut.modifiers.contains(.command) { mods |= UInt32(cmdKey) }
+            if shortcut.modifiers.contains(.option) { mods |= UInt32(optionKey) }
+            if shortcut.modifiers.contains(.control) { mods |= UInt32(controlKey) }
+            if shortcut.modifiers.contains(.shift) { mods |= UInt32(shiftKey) }
+            let reg = RegisterEventHotKey(UInt32(keyCode), mods, id,
+                                          GetApplicationEventTarget(), 0, &ref)
+            if reg == noErr, let ref {
+                hotKeyRefs.append(ref)
+                actionForID[nextID] = action
+                nextID += 1
+            } else {
+                Logger.shared.warn("Shortcut \(action.title): system refused \(shortcut.display)")
+            }
+        }
+        installMouseMonitors()
+        Logger.shared.info("Global shortcuts: \(hotKeyRefs.count) keys, \(actionForMouse.count) mouse")
+    }
+
+    private func installHandlerIfNeeded() {
+        guard !installed else { return }
+        installed = true
+        var type = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                                 eventKind: UInt32(kEventHotKeyPressed))
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, userData in
+            guard let event, let userData else { return OSStatus(eventNotHandledErr) }
+            var hotKeyID = EventHotKeyID()
+            let err = GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                                        EventParamType(typeEventHotKeyID), nil,
+                                        MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
+            guard err == noErr, hotKeyID.signature == GlobalShortcuts.signature else {
+                return OSStatus(eventNotHandledErr)
+            }
+            let center = Unmanaged<GlobalShortcuts>.fromOpaque(userData).takeUnretainedValue()
+            if let action = center.actionForID[hotKeyID.id] {
+                DispatchQueue.main.async { center.handler?(action) }
+                return noErr
+            }
+            return OSStatus(eventNotHandledErr)
+        }, 1, &type, Unmanaged.passUnretained(self).toOpaque(), nil)
+    }
+
+    private func installMouseMonitors() {
+        guard !actionForMouse.isEmpty else { return }
+        let handle: (NSEvent) -> Void = { [weak self] event in
+            guard let self, let action = self.actionForMouse[event.buttonNumber] else { return }
+            DispatchQueue.main.async { self.handler?(action) }
+        }
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: [.otherMouseDown], handler: handle) {
+            mouseMonitors.append(global)
+        }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: [.otherMouseDown], handler: { event in
+            handle(event); return event
+        }) {
+            mouseMonitors.append(local)
+        }
+    }
+
+    private func unregister() {
+        for ref in hotKeyRefs { UnregisterEventHotKey(ref) }
+        hotKeyRefs.removeAll()
+        for monitor in mouseMonitors { NSEvent.removeMonitor(monitor) }
+        mouseMonitors.removeAll()
+        actionForID.removeAll()
+        actionForMouse.removeAll()
+    }
+
+    /// Maps a recorder label ("C", "F13", "Space") to a virtual key code.
+    static func keyCode(for label: String) -> UInt16? {
+        let map: [String: UInt16] = [
+            "A": 0, "S": 1, "D": 2, "F": 3, "H": 4, "G": 5, "Z": 6, "X": 7, "C": 8, "V": 9,
+            "B": 11, "Q": 12, "W": 13, "E": 14, "R": 15, "Y": 16, "T": 17, "1": 18, "2": 19,
+            "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "9": 25, "7": 26, "-": 27, "8": 28,
+            "0": 29, "]": 30, "O": 31, "U": 32, "[": 33, "I": 34, "P": 35, "L": 37, "J": 38,
+            "'": 39, "K": 40, ";": 41, "\\": 42, ",": 43, "/": 44, "N": 45, "M": 46, ".": 47,
+            "Tab": 48, "Space": 49, "Return": 36, "Delete": 51, "Esc": 53,
+            "F1": 122, "F2": 120, "F3": 99, "F4": 118, "F5": 96, "F6": 97, "F7": 98,
+            "F8": 100, "F9": 101, "F10": 109, "F11": 103, "F12": 111, "F13": 105,
+            "F14": 107, "F15": 113,
+        ]
+        return map[label.uppercased()]
     }
 }

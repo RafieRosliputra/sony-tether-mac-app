@@ -19,8 +19,9 @@ final class ShortcutTabView: NSView, NSTableViewDataSource, NSTableViewDelegate 
 
     private func build() {
         let title = makeLabel("Keyboard Shortcuts", size: 13, weight: .semibold)
-        let note = makeLabel("Menu shortcuts apply while sonyTether is frontmost. "
-            + "The global capture trigger (sidebar) works in the background.",
+        let note = makeLabel("Every shortcut here is global: it fires even when sonyTether is "
+            + "in the background. Modifiers are optional — a single key works, but it will "
+            + "also fire while you type in other apps.",
             size: 10, color: .secondaryLabelColor)
 
         for (id, name, width) in [("action", "Action", 240.0), ("key", "Shortcut", 180.0)] {
@@ -99,9 +100,10 @@ final class ShortcutTabView: NSView, NSTableViewDataSource, NSTableViewDelegate 
             if let menuShortcut = Self.menuShortcut(from: captured) {
                 ShortcutStore.shared.set(menuShortcut, for: action)
                 self.detail.stringValue = "\(action.title) → \(menuShortcut.display)"
+                GlobalShortcuts.shared.reload()
                 self.onChange?()
             } else {
-                self.detail.stringValue = "That key cannot be used as a menu shortcut."
+                self.detail.stringValue = "Press a key or an extra mouse button."
             }
             self.table.reloadData()
         }
@@ -114,18 +116,23 @@ final class ShortcutTabView: NSView, NSTableViewDataSource, NSTableViewDelegate 
         guard row >= 0, row < actions.count else { return }
         ShortcutStore.shared.set(nil, for: actions[row])
         table.reloadData()
+        GlobalShortcuts.shared.reload()
         onChange?()
     }
 
     @objc private func resetAll() {
         ShortcutStore.shared.resetAll()
+        GlobalShortcuts.shared.reload()
         table.reloadData()
         detail.stringValue = "Reset to defaults."
         onChange?()
     }
 
     private static func menuShortcut(from captured: CaptureShortcut) -> MenuShortcut? {
-        guard captured.mouseButton == nil, captured.keyCode != nil else { return nil }
+        if let mouse = captured.mouseButton {
+            return MenuShortcut(key: "", modifiers: [], mouseButton: mouse)
+        }
+        guard captured.keyCode != nil else { return nil }
         let key = captured.keyLabel
         guard !key.isEmpty else { return nil }
         let mods = captured.modifierFlags
@@ -134,7 +141,7 @@ final class ShortcutTabView: NSView, NSTableViewDataSource, NSTableViewDelegate 
             return MenuShortcut(key: key, modifiers: mods)
         default:
             guard key.count == 1 else { return nil }
-            return MenuShortcut(key: key.lowercased(), modifiers: mods)
+            return MenuShortcut(key: key.uppercased(), modifiers: mods)
         }
     }
 }

@@ -461,8 +461,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         }
         // photosView.setRoot(URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath))
 
-        hotKey.onTrigger = { [weak self] in self?.captureNow() }
-        hotKey.start(with: CaptureShortcut.load())
+        // Capture is registered through the Shortcuts tab (global).
 
         api.onCommand = { [weak self] command in
             guard let self else { return ["ok": false] }
@@ -759,17 +758,12 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     }
 
     func showShortcutRecorder() {
-        let recorder = ShortcutRecorderViewController()
-        hotKey.isRecording = true
-        recorder.onShortcut = { [weak self] shortcut in
-            guard let self else { return }
-            self.hotKey.isRecording = false
-            self.hotKey.apply(shortcut)
-            shortcut.save()
-            Logger.shared.info("Capture shortcut set: \(shortcut.display)")
-        }
-        recorder.onCancel = { [weak self] in self?.hotKey.isRecording = false }
-        presentAsSheet(recorder)
+        tabs.selectedSegment = 2
+        updateTabs()
+    }
+
+    func toggleLiveView() {
+        setLiveView(!liveOn)
     }
 
     func windowWillClose(_ notification: Notification) {
