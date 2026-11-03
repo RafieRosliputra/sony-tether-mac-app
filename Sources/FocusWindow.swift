@@ -536,8 +536,14 @@ final class FocusImageView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        let factor = 1 + event.scrollingDeltaY / 120
-        zoomAroundMouse(factor: factor, event: event)
+        if event.hasPreciseScrollingDeltas {
+            // trackpad two-finger pan
+            offset.x += event.scrollingDeltaX
+            offset.y -= event.scrollingDeltaY
+            needsDisplay = true
+        } else {
+            zoomAroundMouse(factor: 1 + event.scrollingDeltaY / 120, event: event)
+        }
     }
 
     override func magnify(with event: NSEvent) {
@@ -652,6 +658,12 @@ final class OverviewView: NSView {
     private var dragged = false
 
     override func scrollWheel(with event: NSEvent) {
+        if event.hasPreciseScrollingDeltas {
+            offset.x += event.scrollingDeltaX
+            offset.y -= event.scrollingDeltaY
+            needsDisplay = true
+            return
+        }
         let point = convert(event.locationInWindow, from: nil)
         let center = NSPoint(x: bounds.midX, y: bounds.midY)
         let factor = 1 + event.scrollingDeltaY / 160
@@ -912,10 +924,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
 
         overview.zoom = 1
         overview.onResize = { [weak self] size in self?.resizeOverview(size) }
-        aspectPopup.addItems(withTitles: ["Free", "2:3", "3:2", "4:5", "5:4", "3:4", "4:3"])
-        aspectPopup.controlSize = .small
-        aspectPopup.target = self
-        aspectPopup.action = #selector(aspectChanged)
+
 
         for dot in [adbDot, syncDot] {
             dot.wantsLayer = true
@@ -964,7 +973,6 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
             gridCheck,
             row([zoomPopup]),
             makeSectionLabel("Overview"),
-            row([aspectPopup]),
             overview,
             overviewHint,
             makeSectionLabel("Status"),
@@ -1006,7 +1014,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
             strip.leadingAnchor.constraint(equalTo: right.leadingAnchor),
             strip.trailingAnchor.constraint(equalTo: right.trailingAnchor),
             strip.bottomAnchor.constraint(equalTo: right.bottomAnchor),
-            strip.heightAnchor.constraint(equalToConstant: 96),
+            strip.heightAnchor.constraint(equalToConstant: 108),
         ])
 
         for v in [left, right] {
@@ -1080,6 +1088,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         // zoom deliberately kept across photos
         overview.image = image
         overview.zoom = 1
+        fitOverviewTo(image)
         if wasLive {
             onLiveView?(false)
             scheduleLiveResume()
@@ -1087,6 +1096,17 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         renameField.stringValue = (record.name as NSString).deletingPathExtension
         statusLabel.stringValue = "\(record.name) · \(record.width)×\(record.height) · \(Fmt.bytes(record.bytes))"
         window?.title = "sonyTether — Focus · \(record.name)"
+    }
+
+    /// Small preview takes the photo's own shape: portrait → tall, landscape → wide.
+    private func fitOverviewTo(_ image: NSImage) {
+        guard image.size.width > 0, image.size.height > 0 else { return }
+        let ratio = image.size.width / image.size.height
+        overview.aspect = ratio
+        let width: CGFloat = 262
+        overviewWidth?.constant = width
+        overviewHeight?.constant = min(340, max(90, width / ratio))
+        window?.contentView?.layoutSubtreeIfNeeded()
     }
 
     private func resizeOverview(_ size: NSSize) {

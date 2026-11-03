@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 
 // MARK: - Filename / session panel
 
@@ -311,7 +312,7 @@ final class ScriptPanel: NSView {
 
 // MARK: - Photos table
 
-final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
+final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
     private let table = NSTableView()
     private let scroll = NSScrollView()
     private let summary = makeLabel("0 photos", size: 11, color: .secondaryLabelColor)
@@ -329,6 +330,9 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
     var onSyncFolder: (() -> Void)?
     var rootFolder: URL?
     private var browseRoot: URL?
+    var liveFolder: URL?
+    private var quickLookItem: URL?
+    private var quickLookPanel: QLPreviewPanel?
 
     private let folderTable = NSTableView()
     private let folderScroll = NSScrollView()
@@ -352,15 +356,16 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
     func setRoot(_ url: URL) {
         root = url
         rootFolder = url
+        liveFolder = url
         var list: [URL] = [url]
-        if let enumerator = FileManager.default.enumerator(at: url,
-                                                           includingPropertiesForKeys: [.isDirectoryKey],
-                                                           options: [.skipsHiddenFiles]) {
-            for case let child as URL in enumerator {
+        // Only the folders directly under the live folder, like Finder.
+        if let items = try? FileManager.default.contentsOfDirectory(
+            at: url, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
+            for child in items.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
                 if child.pathComponents.contains(TransferService.webpFolderName) { continue }
-                let isDir = (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-                if isDir { list.append(child) }
-                if list.count > 400 { break }
+                if (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                    list.append(child)
+                }
             }
         }
         folders = list
@@ -382,7 +387,7 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
             guard self.window?.firstResponder === self.table else { return event }
             let row = self.table.selectedRow
             guard row >= 0, row < self.photos.count else { return event }
-            self.openInPreview(self.photos[row])
+            self.toggleQuickLook()
             return nil
         }
         folderTable.target = self
@@ -486,7 +491,8 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         if tableView === folderTable {
             let cell = NSTextField(labelWithString: "")
             cell.font = NSFont.systemFont(ofSize: 11)
-            cell.stringValue = folders[row].lastPathComponent
+            let isLive = liveFolder != nil && folders[row].standardizedFileURL == liveFolder?.standardizedFileURL
+            cell.stringValue = (isLive ? "📌 " : "") + folders[row].lastPathComponent
             cell.toolTip = folders[row].path
             return cell
         }
@@ -623,6 +629,35 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         })
     }
 
+    func toggleQuickLook() {
+        let row = table.selectedRow
+        guard row >= 0, row < photos.count else { return }
+        quickLookItem = photos[row].url
+        guard let panel = QLPreviewPanel.shared() else { return }
+        if panel.isVisible {
+            panel.orderOut(nil)
+        } else {
+            panel.dataSource = self
+            panel.delegate = self
+            panel.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel) -> Bool { true }
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel) {
+        panel.dataSource = self
+        panel.delegate = self
+    }
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel) {
+        panel.dataSource = nil
+        panel.delegate = nil
+    }
+
+    func numberOfPreviewItems(in panel: QLPreviewPanel) -> Int { quickLookItem == nil ? 0 : 1 }
+    func previewPanel(_ panel: QLPreviewPanel, previewItemAt index: Int) -> QLPreviewItem {
+        PreviewItem(url: quickLookItem ?? URL(fileURLWithPath: "/"))
+    }
+
     func openInPreview(_ record: PhotoRecord) {
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
@@ -659,7 +694,13 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
     @objc private func folderClicked() {
         let row = folderTable.clickedRow >= 0 ? folderTable.clickedRow : folderTable.selectedRow
         guard row >= 0, row < folders.count else { return }
-        onSelectFolder?(folders[row])
+        let folder = folders[row]
+        if let live = liveFolder, folder.standardizedFileURL == live.standardizedFileURL {
+            scanFolder(folder)     // whole tree
+        } else {
+            showFolder(folder)     // just this folder
+        }
+        onSelectFolder?(folder)
     }
 
     @objc private func openSelected() {
@@ -676,6 +717,11 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
 
     @objc private func chooseFolder() { onChooseFolder?() }
     @objc private func syncFolderAction() { onSyncFolder?() }
+}
+
+final class PreviewItem: NSObject, QLPreviewItem {
+    var previewItemURL: URL?
+    init(url: URL) { previewItemURL = url }
 }
 
 // MARK: - Log pane

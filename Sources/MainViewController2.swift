@@ -8,6 +8,8 @@ final class LiveViewerView: NSView {
     var rotation: Int = 0 { didSet { needsDisplay = true } }
     var showGrid = false { didSet { needsDisplay = true } }
     var overlayText = "" { didSet { needsDisplay = true } }
+    private var pan = NSPoint.zero
+    private var dragStart: NSPoint?
 
     override var isFlipped: Bool { false }
 
@@ -25,7 +27,8 @@ final class LiveViewerView: NSView {
         let fit = min(bounds.width / target.width, bounds.height / target.height) * zoom
         let w = target.width * fit
         let h = target.height * fit
-        let rect = NSRect(x: (bounds.width - w) / 2, y: (bounds.height - h) / 2, width: w, height: h)
+        let rect = NSRect(x: (bounds.width - w) / 2 + pan.x, y: (bounds.height - h) / 2 + pan.y,
+                          width: w, height: h)
 
         NSGraphicsContext.saveGraphicsState()
         let transform = NSAffineTransform()
@@ -50,6 +53,42 @@ final class LiveViewerView: NSView {
         }
         drawOverlay()
     }
+
+    override func scrollWheel(with event: NSEvent) {
+        if event.hasPreciseScrollingDeltas {
+            pan.x += event.scrollingDeltaX
+            pan.y -= event.scrollingDeltaY
+            needsDisplay = true
+            return
+        }
+        let before = zoom
+        zoom = max(0.2, min(12, zoom * (1 + event.scrollingDeltaY / 120)))
+        let point = convert(event.locationInWindow, from: nil)
+        let dx = (point.x - bounds.midX), dy = (point.y - bounds.midY)
+        pan.x -= dx * (zoom / before - 1)
+        pan.y -= dy * (zoom / before - 1)
+        needsDisplay = true
+    }
+
+    override func magnify(with event: NSEvent) {
+        zoom = max(0.2, min(12, zoom * (1 + event.magnification)))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 { zoom = 1; pan = .zero; needsDisplay = true; return }
+        dragStart = event.locationInWindow
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = dragStart else { return }
+        let now = event.locationInWindow
+        pan.x += now.x - start.x
+        pan.y += now.y - start.y
+        dragStart = now
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) { dragStart = nil }
 
     private func drawOverlay() {
         guard !overlayText.isEmpty else { return }
@@ -822,10 +861,9 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             Logger.shared.warn("Could not create \(target.path): \(error.localizedDescription)")
             return false
         }
-        folderStack.append(prefs.downloadDirectory)
-        prefs.downloadDirectory = target.path
-        prefs.save()
-        Logger.shared.info("Download folder → \(target.path)")
+        // Creating a folder never changes where new captures go; only the
+        // Choose Folder button does that.
+        Logger.shared.info("Folder created: \(target.path)")
         updateSessionUI()
         refreshFocusWindow(select: nil)
         return true
@@ -876,13 +914,10 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             Logger.shared.warn("Could not create folder: \(error.localizedDescription)")
             return
         }
-        prefs.downloadDirectory = target.path
-        prefs.save()
-        camera.prefs = prefs
-        photosRoot = target
-        photosView.scanFolder(target)
-        updateSessionUI()
-        Logger.shared.info("New capture folder → \(target.path)")
+        photosView.setRoot(URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath))
+        photosView.showFolder(target)
+        photosRoot = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        Logger.shared.info("New folder → \(target.path) (capture folder unchanged)")
     }
 
     private func deleteFolder(_ folder: URL) {
