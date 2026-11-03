@@ -46,7 +46,7 @@ final class TransferService {
         let prefs = self.prefs
         queue.async { [weak self] in
             guard let self else { return }
-            if prefs.transferADBEnabled { self.adbPush(record, prefs: prefs) }
+            if prefs.transferADBEnabled && prefs.adbAutoPush { self.adbPush(record, prefs: prefs) }
             if prefs.transferSyncEnabled { self.sync(record, prefs: prefs) }
         }
     }
@@ -54,6 +54,70 @@ final class TransferService {
     func pushLast(_ record: PhotoRecord) {
         let prefs = self.prefs
         queue.async { [weak self] in self?.adbPush(record, prefs: prefs) }
+    }
+
+    // MARK: - ADB controls (used by the ADB tab)
+
+    @discardableResult
+    func adbConnectWireless(host: String, port: Int) -> String {
+        guard let adb = adbBinary else { return "adb not found" }
+        let out = run(adb, ["connect", "\(host):\(port)"])
+        log.info("ADB connect \(host):\(port): \(out.trimmingCharacters(in: .whitespacesAndNewlines))")
+        return out
+    }
+
+    @discardableResult
+    func adbKillServer() -> String {
+        guard let adb = adbBinary else { return "adb not found" }
+        let out = run(adb, ["kill-server"])
+        log.info("ADB kill-server")
+        return out
+    }
+
+    @discardableResult
+    func adbStartServer() -> String {
+        guard let adb = adbBinary else { return "adb not found" }
+        let out = run(adb, ["start-server"])
+        log.info("ADB start-server")
+        return out
+    }
+
+    @discardableResult
+    func adbOpenGallery() -> String {
+        guard let adb = adbBinary, let serial = adbDevices().first else { return "no device" }
+        let pkg = prefs.adbGalleryPackage
+        let out = run(adb, ["-s", serial, "shell", "monkey", "-p", pkg,
+                            "-c", "android.intent.category.LAUNCHER", "1"])
+        log.info("ADB open gallery (\(pkg))")
+        return out
+    }
+
+    @discardableResult
+    func adbRestartGallery() -> String {
+        guard let adb = adbBinary, let serial = adbDevices().first else { return "no device" }
+        let pkg = prefs.adbGalleryPackage
+        _ = run(adb, ["-s", serial, "shell", "am", "force-stop", pkg])
+        let out = run(adb, ["-s", serial, "shell", "monkey", "-p", pkg,
+                            "-c", "android.intent.category.LAUNCHER", "1"])
+        log.info("ADB restart gallery (\(pkg))")
+        return out
+    }
+
+    @discardableResult
+    func adbDeleteAllOnDevice() -> String {
+        guard let adb = adbBinary, let serial = adbDevices().first else { return "no device" }
+        let target = prefs.adbTargetFolder.isEmpty ? "/sdcard/DCIM/sonyTether" : prefs.adbTargetFolder
+        let out = run(adb, ["-s", serial, "shell", "rm", "-rf", target])
+        log.warn("ADB delete all in \(target) on \(serial)")
+        return out
+    }
+
+    func adbOpenOnDevice(_ remote: String, serial: String) {
+        guard let adb = adbBinary else { return }
+        _ = run(adb, ["-s", serial, "shell", "am", "start",
+                      "-a", "android.intent.action.VIEW",
+                      "-d", "file://\(remote)",
+                      "-t", "image/*"])
     }
 
     func syncAll(_ records: [PhotoRecord]) {
@@ -90,6 +154,7 @@ final class TransferService {
         } else {
             lastADBStatus = "pushed \(record.name)"
             log.info("ADB: \(record.name) → \(remote) (\(serial))")
+            if prefs.adbOpenAfterPush { adbOpenOnDevice(remote, serial: serial) }
         }
         publish()
     }
@@ -126,6 +191,11 @@ final class TransferService {
 
     private func publish() {
         TransferStatusBroker.shared.summary = "ADB \(lastADBStatus) · Sync \(lastSyncStatus)"
+        TransferStatusBroker.shared.adbOK = lastADBStatus.hasPrefix("pushed")
+        TransferStatusBroker.shared.syncOK = lastSyncStatus.hasPrefix("synced")
+        TransferStatusBroker.shared.adbEnabled = prefs.transferADBEnabled
+        TransferStatusBroker.shared.syncEnabled = prefs.transferSyncEnabled
+        TransferStatusBroker.shared.append("ADB \(lastADBStatus) · Sync \(lastSyncStatus)")
         DispatchQueue.main.async { NotificationCenter.default.post(name: .transferStatus, object: nil) }
     }
 
@@ -174,10 +244,14 @@ final class FocusImageView: NSView {
         let fit = min(bounds.width / image.size.width, bounds.height / image.size.height)
         let scale = fit * zoom
         let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
-        var rect = NSRect(x: (bounds.width - size.width) / 2 + offset.x,
-                          y: (bounds.height - size.height) / 2 + offset.y,
+        var pan = offset
+        let maxX = max(0, (size.width - bounds.width) / 2)
+        let maxY = max(0, (size.height - bounds.height) / 2)
+        pan.x = min(maxX, max(-maxX, pan.x))
+        pan.y = min(maxY, max(-maxY, pan.y))
+        var rect = NSRect(x: (bounds.width - size.width) / 2 + pan.x,
+                          y: (bounds.height - size.height) / 2 + pan.y,
                           width: size.width, height: size.height)
-        rect = rect.intersection(bounds.insetBy(dx: -bounds.width, dy: -bounds.height))
         image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
         if showGrid {
             NSColor.white.withAlphaComponent(0.28).setStroke()
@@ -326,6 +400,12 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     private let gridCheck = NSButton(checkboxWithTitle: "Grid overlay", target: nil, action: nil)
     private let zoomPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let transferLabel = makeLabel("", size: 10, color: .tertiaryLabelColor)
+    private let adbDot = NSView()
+    private let syncDot = NSView()
+    private let adbLabel = makeLabel("ADB —", size: 10, color: .secondaryLabelColor)
+    private let syncLabel = makeLabel("Sync —", size: 10, color: .secondaryLabelColor)
+    private let folderButton = NSButton(title: "", target: nil, action: nil)
+    private let statusLog = NSTextView()
 
     var photos: [PhotoRecord] = []
     var lastRecord: PhotoRecord?
@@ -334,6 +414,8 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     var onChooseFolder: (() -> Void)?
     var onNewFolder: ((String) -> Bool)?
     var onRename: ((PhotoRecord, String) -> Bool)?
+    var onBack: (() -> Void)?
+    var canGoBack = false
     var liveFramesEnabled = false
 
     convenience init() {
@@ -358,6 +440,14 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
 
         // Left column widgets
         let title = makeLabel("Capture", size: 13, weight: .semibold)
+        let backButton = makeButton("← Back", target: self, action: #selector(goBack))
+        folderButton.bezelStyle = .rounded
+        folderButton.controlSize = .small
+        folderButton.alignment = .left
+        folderButton.target = self
+        folderButton.action = #selector(chooseFolder)
+        folderButton.toolTip = "Click to choose another folder"
+        folderButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         folderLabel.maximumNumberOfLines = 2
         folderLabel.preferredMaxLayoutWidth = 250
         let chooseFolder = makeButton("Choose Folder…", target: self, action: #selector(chooseFolder))
@@ -391,6 +481,24 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         ratioPopup.target = self
         ratioPopup.action = #selector(ratioChanged)
 
+        for dot in [adbDot, syncDot] {
+            dot.wantsLayer = true
+            dot.layer?.backgroundColor = NSColor.systemRed.cgColor
+            dot.layer?.cornerRadius = 4
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.widthAnchor.constraint(equalToConstant: 8).isActive = true
+            dot.heightAnchor.constraint(equalToConstant: 8).isActive = true
+        }
+        statusLog.isEditable = false
+        statusLog.font = NSFont.monospacedSystemFont(ofSize: 9, weight: .regular)
+        statusLog.drawsBackground = true
+        statusLog.backgroundColor = .textBackgroundColor
+        let statusScroll = NSScrollView()
+        statusScroll.documentView = statusLog
+        statusScroll.hasVerticalScroller = true
+        statusScroll.translatesAutoresizingMaskIntoConstraints = false
+        statusScroll.heightAnchor.constraint(equalToConstant: 86).isActive = true
+        statusScroll.widthAnchor.constraint(equalToConstant: 260).isActive = true
         overview.imageScaling = .scaleProportionallyUpOrDown
         overview.wantsLayer = true
         overview.layer?.backgroundColor = NSColor.black.cgColor
@@ -407,6 +515,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
 
         let stack = NSStackView(views: [
             title,
+            row([backButton, folderButton]),
             folderLabel,
             chooseFolder,
             row([newFolderField, createFolder]),
@@ -420,6 +529,10 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
             makeSectionLabel("Overview"),
             row([ratioPopup]),
             overview,
+            makeSectionLabel("Transfer"),
+            row([adbDot, adbLabel]),
+            row([syncDot, syncLabel]),
+            statusScroll,
             transferLabel,
         ])
         stack.orientation = .vertical
@@ -476,6 +589,10 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     func update(folder: String, session: SessionSnapshot, photos: [PhotoRecord], transfer: String) {
         folderLabel.stringValue = folder.replacingOccurrences(
             of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
+        folderButton.title = (folder as NSString).lastPathComponent.isEmpty
+            ? folder : "📁 " + (folder as NSString).lastPathComponent
+        folderButton.toolTip = folder
+        renderTransferStatus()
         transferLabel.stringValue = transfer
         self.photos = photos
         strip.setPhotos(photos)
@@ -495,8 +612,8 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         liveFramesEnabled = false
         liveCheck.state = .off
         bigView.image = image
-        bigView.zoom = 1
         bigView.overlay = ""
+        bigView.zoom = max(1, bigView.zoom)
         updateOverview(image, aspect: record.width >= record.height ? .landscape : .portrait)
         renameField.stringValue = (record.name as NSString).deletingPathExtension
         statusLabel.stringValue = "\(record.name) · \(record.width)×\(record.height) · \(Fmt.bytes(record.bytes))"
@@ -506,6 +623,24 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     private enum Aspect { case landscape, portrait }
 
     private func updateOverview(_ image: NSImage, aspect: Aspect) {
+        for dot in [adbDot, syncDot] {
+            dot.wantsLayer = true
+            dot.layer?.backgroundColor = NSColor.systemRed.cgColor
+            dot.layer?.cornerRadius = 4
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.widthAnchor.constraint(equalToConstant: 8).isActive = true
+            dot.heightAnchor.constraint(equalToConstant: 8).isActive = true
+        }
+        statusLog.isEditable = false
+        statusLog.font = NSFont.monospacedSystemFont(ofSize: 9, weight: .regular)
+        statusLog.drawsBackground = true
+        statusLog.backgroundColor = .textBackgroundColor
+        let statusScroll = NSScrollView()
+        statusScroll.documentView = statusLog
+        statusScroll.hasVerticalScroller = true
+        statusScroll.translatesAutoresizingMaskIntoConstraints = false
+        statusScroll.heightAnchor.constraint(equalToConstant: 86).isActive = true
+        statusScroll.widthAnchor.constraint(equalToConstant: 260).isActive = true
         overview.imageScaling = .scaleProportionallyUpOrDown
         let choice = ratioPopup.titleOfSelectedItem ?? "Auto"
         let vertical = choice == "Vertical" || (choice == "Auto" && aspect == .portrait)
@@ -539,6 +674,27 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     // MARK: Actions
 
     @objc private func chooseFolder() { onChooseFolder?() }
+
+    @objc private func goBack() {
+        guard canGoBack else { return }
+        onBack?()
+    }
+
+    func renderTransferStatus() {
+        let broker = TransferStatusBroker.shared
+        func color(_ ok: Bool, _ enabled: Bool) -> NSColor {
+            if !enabled { return .systemGray }
+            return ok ? .systemGreen : .systemRed
+        }
+        adbDot.layer?.backgroundColor = color(broker.adbOK, broker.adbEnabled).cgColor
+        syncDot.layer?.backgroundColor = color(broker.syncOK, broker.syncEnabled).cgColor
+        adbLabel.stringValue = broker.adbEnabled
+            ? (broker.adbOK ? "ADB OK" : "ADB failed") : "ADB off"
+        syncLabel.stringValue = broker.syncEnabled
+            ? (broker.syncOK ? "Sync OK" : "Sync failed") : "Sync off"
+        statusLog.string = broker.logLines.joined(separator: "\n")
+        transferLabel.stringValue = broker.summary
+    }
 
     @objc private func createFolder() {
         let name = newFolderField.stringValue.trimmingCharacters(in: .whitespaces)
@@ -601,4 +757,14 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
 final class TransferStatusBroker {
     static let shared = TransferStatusBroker()
     var summary = ""
+    var adbOK = false
+    var syncOK = false
+    var adbEnabled = false
+    var syncEnabled = false
+    var logLines: [String] = []
+
+    func append(_ line: String) {
+        logLines.append(line)
+        if logLines.count > 6 { logLines.removeFirst() }
+    }
 }

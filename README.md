@@ -16,6 +16,7 @@ and a Lightroom Classic plug-in.
 | **Scripts** | timelapse and delayed trigger (shipped), brackets/HDR parked — see the note below |
 | **Log viewer** | every gphoto2 call, level filter, pause, reveal log file |
 | **Global shortcut** | ⌃⌥C by default, keyboard chord or extra mouse button, fires while the app is in the background |
+| **Tabs** | Capture · Photos · Shortcuts · ADB · Sync |
 | **Focus window** | Display → New Display Window: full-size last shot for focus checking, grid overlay, live-view toggle, panorama/rotation overview, photo strip, rename the last shot, create a new capture subfolder |
 | **Transfer** | ADB push to an Android device and/or copy every capture into a sync folder (NAS / backup) |
 | **External API** | JSON lines over TCP — events on 54643, commands on 54644 |
@@ -136,11 +137,33 @@ another display:
 - **bottom strip** — every capture in the session, click to load one.
 - **overview** — small copy of the frame, `Auto / Horizontal / Vertical`
   (Vertical rotates 90° for checking a portrait crop).
+- **transfer panel** — ADB and Sync indicator dots (grey = off, red = failing,
+  green = OK) with the last few transfer lines.
 - **Capture panel** — current folder, *Choose Folder…*, create a new subfolder
   by name (it becomes the download folder), the last shot's size and
   dimensions, and a rename field for the shot you just took.
 
 ![focus window](docs/focus-030.png)
+
+## Tabs
+
+**Shortcuts** — a table of every menu action with its key; select a row, *Set…*
+records a new chord, *Clear* removes it, *Reset All* restores defaults. The
+global capture trigger (⌃⌥C, background) stays separate.
+
+**ADB** — enable/pause auto-push, adb binary, device serial, target folder,
+wireless connect (host:port), kill/start server, gallery package with
+open/restart, delete all photos on the device (with confirmation), and an
+optional **auto restart** of the app every N minutes (default 5).
+
+**Sync** — enable, folder, keep subfolder structure, Sync All Now, reveal.
+
+## Folder navigation in the focus window
+
+The folder row shows **← Back** and a button with the current folder name.
+Creating a new subfolder enters it and keeps the previous one on the stack, so
+Back always returns to the session folder. Clicking the folder button opens the
+folder chooser.
 
 ## ADB + folder sync
 

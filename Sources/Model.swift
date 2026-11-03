@@ -31,6 +31,15 @@ struct Preferences {
     var adbTargetFolder: String
     var transferSyncEnabled: Bool
     var syncFolder: String
+    var syncMirrorTree: Bool
+
+    var adbWirelessHost: String
+    var adbWirelessPort: Int
+    var adbOpenAfterPush: Bool
+    var adbAutoPush: Bool
+    var adbRestartAppEnabled: Bool
+    var adbRestartAppMinutes: Int
+    var adbGalleryPackage: String
 
     var barcodeEnabled: Bool
     var barcodeResetsSequence: Bool
@@ -69,6 +78,14 @@ struct Preferences {
             adbTargetFolder: d.string(forKey: "adbTargetFolder") ?? "/sdcard/DCIM/sonyTether",
             transferSyncEnabled: b("transferSyncEnabled", false),
             syncFolder: d.string(forKey: "syncFolder") ?? "",
+            syncMirrorTree: b("syncMirrorTree", true),
+            adbWirelessHost: d.string(forKey: "adbWirelessHost") ?? "192.168.1.100",
+            adbWirelessPort: i("adbWirelessPort", 5555),
+            adbOpenAfterPush: b("adbOpenAfterPush", false),
+            adbAutoPush: b("adbAutoPush", true),
+            adbRestartAppEnabled: b("adbRestartAppEnabled", false),
+            adbRestartAppMinutes: i("adbRestartAppMinutes", 5),
+            adbGalleryPackage: d.string(forKey: "adbGalleryPackage") ?? "com.android.gallery3d",
             barcodeEnabled: b("barcodeEnabled", true),
             barcodeResetsSequence: b("barcodeResetsSequence", false)
         )
@@ -99,6 +116,14 @@ struct Preferences {
         d.set(adbTargetFolder, forKey: "adbTargetFolder")
         d.set(transferSyncEnabled, forKey: "transferSyncEnabled")
         d.set(syncFolder, forKey: "syncFolder")
+        d.set(syncMirrorTree, forKey: "syncMirrorTree")
+        d.set(adbWirelessHost, forKey: "adbWirelessHost")
+        d.set(adbWirelessPort, forKey: "adbWirelessPort")
+        d.set(adbOpenAfterPush, forKey: "adbOpenAfterPush")
+        d.set(adbAutoPush, forKey: "adbAutoPush")
+        d.set(adbRestartAppEnabled, forKey: "adbRestartAppEnabled")
+        d.set(adbRestartAppMinutes, forKey: "adbRestartAppMinutes")
+        d.set(adbGalleryPackage, forKey: "adbGalleryPackage")
         d.set(barcodeEnabled, forKey: "barcodeEnabled")
         d.set(barcodeResetsSequence, forKey: "barcodeResetsSequence")
     }

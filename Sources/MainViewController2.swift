@@ -73,6 +73,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     private var photos: [PhotoRecord] = []
     private let transfer: TransferService
     private var focusWindow: FocusWindowController?
+    private var folderStack: [String] = []
 
     // Panels
     private let controls = CameraControlsView()
@@ -83,7 +84,12 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     private let liveView = LiveViewerView()
 
     // Tabs + chrome
-    private let tabs = NSSegmentedControl(labels: ["Capture", "Photos"], trackingMode: .selectOne, target: nil, action: nil)
+    private let tabs = NSSegmentedControl(labels: ["Capture", "Photos", "Shortcuts", "ADB", "Sync"],
+                                          trackingMode: .selectOne, target: nil, action: nil)
+    private let shortcutTab = ShortcutTabView()
+    private let adbTab = ADBTabView()
+    private let syncTab = SyncTabView()
+    private var restartTimer: Timer?
     private var captureArea = NSView()
     private let liveCard = NSView()
     private let logCard = NSView()
@@ -263,6 +269,9 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         ])
 
         photosView.translatesAutoresizingMaskIntoConstraints = false
+        shortcutTab.translatesAutoresizingMaskIntoConstraints = false
+        adbTab.translatesAutoresizingMaskIntoConstraints = false
+        syncTab.translatesAutoresizingMaskIntoConstraints = false
         logCard.wantsLayer = true
         logCard.layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
         logCard.translatesAutoresizingMaskIntoConstraints = false
@@ -271,6 +280,9 @@ final class MainViewController: NSViewController, NSWindowDelegate {
 
         container.addSubview(captureArea)
         container.addSubview(photosView)
+        container.addSubview(shortcutTab)
+        container.addSubview(adbTab)
+        container.addSubview(syncTab)
         container.addSubview(logCard)
 
         NSLayoutConstraint.activate([
@@ -281,6 +293,18 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             photosView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             photosView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             photosView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            shortcutTab.topAnchor.constraint(equalTo: container.topAnchor),
+            shortcutTab.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            shortcutTab.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            shortcutTab.bottomAnchor.constraint(equalTo: logCard.topAnchor),
+            adbTab.topAnchor.constraint(equalTo: container.topAnchor),
+            adbTab.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            adbTab.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            adbTab.bottomAnchor.constraint(equalTo: logCard.topAnchor),
+            syncTab.topAnchor.constraint(equalTo: container.topAnchor),
+            syncTab.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            syncTab.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            syncTab.bottomAnchor.constraint(equalTo: logCard.topAnchor),
             logCard.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             logCard.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             logCard.bottomAnchor.constraint(equalTo: container.bottomAnchor),
@@ -422,6 +446,20 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             api.start(eventPort: prefs.apiEventPort, replyPort: prefs.apiReplyPort)
         }
 
+        shortcutTab.isHidden = true
+        adbTab.isHidden = true
+        syncTab.isHidden = true
+        NotificationCenter.default.addObserver(forName: .transferStatus, object: nil, queue: .main) { [weak self] _ in
+            self?.focusWindow?.renderTransferStatus()
+        }
+        adbTab.prefProvider = { [weak self] in self?.prefs ?? Preferences.load() }
+        adbTab.service = transfer
+        adbTab.onCommit = { [weak self] updated in self?.applyPrefs(updated) }
+        syncTab.prefProvider = { [weak self] in self?.prefs ?? Preferences.load() }
+        syncTab.onCommit = { [weak self] updated in self?.applyPrefs(updated) }
+        syncTab.onSyncAll = { [weak self] in self?.syncAllNow() }
+        shortcutTab.onChange = { NotificationCenter.default.post(name: .shortcutsChanged, object: nil) }
+        scheduleAutoRestart()
         updateSessionUI()
         controls.update(status: captureStatus, controls: [], liveOn: liveOn)
         setLiveView(true)
@@ -437,15 +475,28 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             w.onNewFolder = { [weak self] name in self?.createSubfolder(name) ?? false }
             w.onRename = { [weak self] record, name in self?.rename(record, to: name) ?? false }
             w.onLiveView = { [weak self] on in self?.setLiveView(on) }
+            w.onBack = { [weak self] in self?.goBackFolder() }
             focusWindow = w
         }
         refreshFocusWindow(select: photos.last)
+        focusWindow?.canGoBack = !folderStack.isEmpty
         focusWindow?.showWindow(nil)
         focusWindow?.window?.makeKeyAndOrderFront(nil)
     }
 
+    func goBackFolder() {
+        guard let previous = folderStack.popLast() else { return }
+        prefs.downloadDirectory = previous
+        prefs.save()
+        Logger.shared.info("Download folder ← \(previous)")
+        updateSessionUI()
+        refreshFocusWindow(select: nil)
+        focusWindow?.canGoBack = !folderStack.isEmpty
+    }
+
     private func refreshFocusWindow(select: PhotoRecord?) {
         guard let focusWindow else { return }
+        focusWindow.canGoBack = !folderStack.isEmpty
         focusWindow.update(folder: prefs.downloadDirectory,
                            session: camera.session.snapshot(),
                            photos: photos,
@@ -462,6 +513,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             Logger.shared.warn("Could not create \(target.path): \(error.localizedDescription)")
             return false
         }
+        folderStack.append(prefs.downloadDirectory)
         prefs.downloadDirectory = target.path
         prefs.save()
         Logger.shared.info("Download folder → \(target.path)")
@@ -544,6 +596,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         panel.directoryURL = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
+            self.folderStack.append(self.prefs.downloadDirectory)
             self.prefs.downloadDirectory = url.path
             self.prefs.save()
             self.updateSessionUI()
@@ -663,9 +716,55 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     @objc private func tabChanged() { updateTabs() }
 
     private func updateTabs() {
-        let photosTab = tabs.selectedSegment == 1
-        captureArea.isHidden = photosTab
-        photosView.isHidden = !photosTab
+        let segment = tabs.selectedSegment
+        captureArea.isHidden = segment != 0
+        photosView.isHidden = segment != 1
+        shortcutTab.isHidden = segment != 2
+        adbTab.isHidden = segment != 3
+        syncTab.isHidden = segment != 4
+        if segment == 2 {
+            shortcutTab.reload()
+        } else if segment == 3 {
+            adbTab.reload()
+        } else if segment == 4 {
+            syncTab.reload()
+        }
+        logCard.isHidden = !logVisible || segment >= 2
+    }
+
+    func applyPrefs(_ updated: Preferences) {
+        prefs = updated
+        prefs.save()
+        camera.prefs = updated
+        transfer.prefs = updated
+        scheduleAutoRestart()
+        updateSessionUI()
+        refreshFocusWindow(select: nil)
+        adbTab.reload()
+        syncTab.reload()
+    }
+
+    private func scheduleAutoRestart() {
+        restartTimer?.invalidate()
+        restartTimer = nil
+        guard prefs.adbRestartAppEnabled else { return }
+        let interval = TimeInterval(max(1, prefs.adbRestartAppMinutes) * 60)
+        Logger.shared.info("Auto restart every \(Int(interval / 60)) min")
+        restartTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            guard let self, self.prefs.adbRestartAppEnabled else { return }
+            Logger.shared.info("Auto restart: relaunching sonyTether")
+            self.restartApplication()
+        }
+    }
+
+    func restartApplication() {
+        api.stop()
+        camera.shutdown()
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-n", Bundle.main.bundleURL.path]
+        try? task.run()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { NSApp.terminate(nil) }
     }
 
     @objc private func zoomChanged() {

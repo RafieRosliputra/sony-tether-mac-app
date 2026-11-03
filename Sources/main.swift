@@ -142,6 +142,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         camera.start()
+        NotificationCenter.default.addObserver(forName: .shortcutsChanged, object: nil,
+                                               queue: .main) { [weak self] _ in
+            self?.buildMenu()
+        }
         Logger.shared.info("UI ready · \(AppInfo.name) \(AppInfo.version)")
     }
 
@@ -247,6 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        ShortcutStore.shared.applyAll(to: mainMenu)
         NSApp.mainMenu = mainMenu
     }
 
