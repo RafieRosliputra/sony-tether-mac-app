@@ -548,12 +548,13 @@ final class FocusImageView: NSView {
             offset.y -= event.scrollingDeltaY
             needsDisplay = true
         } else {
-            zoomAroundMouse(factor: 1 + event.scrollingDeltaY / 120, event: event)
+            // one wheel notch ≈ 15 % so the change is visible
+            zoomAroundMouse(factor: pow(1.15, event.scrollingDeltaY), event: event)
         }
     }
 
     override func magnify(with event: NSEvent) {
-        zoomAroundMouse(factor: 1 + event.magnification, event: event)
+        zoomAroundMouse(factor: 1 + event.magnification * 3, event: event)
     }
 
     private func zoomAroundMouse(factor: CGFloat, event: NSEvent) {
@@ -1080,10 +1081,8 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     func setLiveFrame(_ image: NSImage) {
         guard liveFramesEnabled else { return }
         bigView.image = image
-        if liveFramesEnabled {
-            bigView.zoom = LiveTransform.zoom
-            bigView.rotation = LiveTransform.rotation
-        }
+        // Zoom/rotation are only applied when live view is turned on or the
+        // main window changes them — never on every frame (that reset zoom).
         bigView.overlay = ""
     }
 
