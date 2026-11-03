@@ -45,6 +45,7 @@ struct Preferences {
     var adbRestartGalleryEnabled: Bool
     var adbRestartGalleryMinutes: Int
 
+    var liveFolder: String
     var filenamePrefix: String
     var prefixHistory: [String]
 
@@ -97,6 +98,7 @@ struct Preferences {
             adbStayAwake: b("adbStayAwake", false),
             adbRestartGalleryEnabled: b("adbRestartGalleryEnabled", false),
             adbRestartGalleryMinutes: i("adbRestartGalleryMinutes", 5),
+            liveFolder: d.string(forKey: "liveFolder") ?? (d.string(forKey: "downloadDirectory") ?? pictures),
             filenamePrefix: d.string(forKey: "filenamePrefix") ?? "sk",
             prefixHistory: d.stringArray(forKey: "prefixHistory") ?? ["sk"],
             barcodeEnabled: b("barcodeEnabled", true),
@@ -141,6 +143,7 @@ struct Preferences {
         d.set(adbStayAwake, forKey: "adbStayAwake")
         d.set(adbRestartGalleryEnabled, forKey: "adbRestartGalleryEnabled")
         d.set(adbRestartGalleryMinutes, forKey: "adbRestartGalleryMinutes")
+        d.set(liveFolder, forKey: "liveFolder")
         d.set(filenamePrefix, forKey: "filenamePrefix")
         d.set(prefixHistory, forKey: "prefixHistory")
         d.set(barcodeEnabled, forKey: "barcodeEnabled")

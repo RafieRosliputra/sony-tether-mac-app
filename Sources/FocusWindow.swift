@@ -317,10 +317,10 @@ final class TransferService {
 
     /// Android and the server both want WebP; convert with cwebp.
     func webpVersion(of record: PhotoRecord) -> URL? {
-        // Keep the WebP copies inside the capture folder so they travel with the
-        // session; the app hides this folder from its own listings.
-        let root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
-        let dir = root.appendingPathComponent(Self.webpFolderName, isDirectory: true)
+        // WebP copies live next to the photo they came from, so a stale
+        // preference can never recreate a deleted folder.
+        let dir = record.url.deletingLastPathComponent()
+            .appendingPathComponent(Self.webpFolderName, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let base = (record.name as NSString).deletingPathExtension
         let target = dir.appendingPathComponent(base + ".webp")

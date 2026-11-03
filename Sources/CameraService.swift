@@ -513,7 +513,19 @@ final class CameraService {
             fileName = String(format: "%@-%04d.%@", NamePolicy.sanitize(prefix), next, ext)
         }
 
-        let root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        var root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        // The folder may have been deleted in Finder; never recreate it silently
+        // — drop back to the live folder instead.
+        if !FileManager.default.fileExists(atPath: root.path) {
+            let live = URL(fileURLWithPath: (prefs.liveFolder as NSString).expandingTildeInPath)
+            if FileManager.default.fileExists(atPath: live.path) {
+                Self.log.warn("Capture folder was removed — falling back to \(live.lastPathComponent)")
+                root = live
+            } else {
+                try? FileManager.default.createDirectory(at: live, withIntermediateDirectories: true)
+                root = live
+            }
+        }
         var dir = root
         if !subdir.isEmpty { dir = root.appendingPathComponent(subdir) }
         var target = dir.appendingPathComponent(fileName)

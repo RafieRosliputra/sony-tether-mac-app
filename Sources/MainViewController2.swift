@@ -555,7 +555,14 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         shortcutTab.onChange = { NotificationCenter.default.post(name: .shortcutsChanged, object: nil) }
         scheduleAutoRestart()
         startAutoSync()
-        let initialRoot = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        if !FileManager.default.fileExists(atPath: (prefs.downloadDirectory as NSString).expandingTildeInPath),
+           FileManager.default.fileExists(atPath: (prefs.liveFolder as NSString).expandingTildeInPath) {
+            prefs.downloadDirectory = prefs.liveFolder
+            prefs.save()
+            camera.prefs = prefs
+            Logger.shared.warn("Capture folder was gone — back to the live folder")
+        }
+        let initialRoot = URL(fileURLWithPath: (prefs.liveFolder as NSString).expandingTildeInPath)
         photosRoot = initialRoot
         photosView.scanFolder(initialRoot)
         if prefs.transferSyncEnabled { transfer.mirrorSyncAsync() }
@@ -1053,6 +1060,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             guard let self, response == .OK, let url = panel.url else { return }
             self.folderStack.append(self.prefs.downloadDirectory)
             self.prefs.downloadDirectory = url.path
+            self.prefs.liveFolder = url.path
             self.prefs.save()
             self.updateSessionUI()
             Logger.shared.info("Download folder → \(url.path)")
