@@ -548,7 +548,20 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         syncTab.onSyncAll = { [weak self] in self?.syncAllNow() }
         syncTab.onMirror = { [weak self] in
             guard let self else { return }
-            self.transfer.mirrorSyncAsync()
+            let alert = NSAlert()
+            alert.messageText = "Mirror the live folder to the server"
+            alert.informativeText = "Copy and convert new files only. Remove server copies whose photo no longer exists locally?"
+            alert.addButton(withTitle: "Mirror only")
+            alert.addButton(withTitle: "Mirror + prune")
+            alert.addButton(withTitle: "Cancel")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                self.transfer.mirrorSyncAsync()
+            case .alertSecondButtonReturn:
+                self.transfer.mirrorSyncAsync(prune: true)
+            default:
+                return
+            }
             self.focusWindow?.renderTransferStatus()
         }
         shortcutTab.onChange = { NotificationCenter.default.post(name: .shortcutsChanged, object: nil) }

@@ -60,7 +60,8 @@ final class TransferService {
             guard let self else { return }
             if prefs.transferSyncEnabled {
                 let folder = (prefs.syncFolder as NSString).expandingTildeInPath
-                let root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+                let source = prefs.liveFolder.isEmpty ? prefs.downloadDirectory : prefs.liveFolder
+        let root = URL(fileURLWithPath: (source as NSString).expandingTildeInPath)
                 func relative(_ url: URL, ext: String) -> String {
                     var path = url.path
                     if path.hasPrefix(root.path) { path = String(path.dropFirst(root.path.count)) }
@@ -117,17 +118,18 @@ final class TransferService {
     }
 
     /// Fire-and-forget variant so the UI thread never waits on cwebp.
-    func mirrorSyncAsync() {
-        queue.async { [weak self] in _ = self?.mirrorSync() }
+    func mirrorSyncAsync(prune: Bool = false) {
+        queue.async { [weak self] in _ = self?.mirrorSync(prune: prune) }
     }
 
     /// Mirrors the whole download tree to the sync folder as WebP: new files
     /// are converted, moved files follow the new folder, removed files go away.
     @discardableResult
-    func mirrorSync() -> String {
+    func mirrorSync(prune: Bool = false) -> String {
         let prefs = self.prefs
         guard prefs.transferSyncEnabled else { return "sync disabled" }
-        let root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        let source = prefs.liveFolder.isEmpty ? prefs.downloadDirectory : prefs.liveFolder
+        let root = URL(fileURLWithPath: (source as NSString).expandingTildeInPath)
         let dest = URL(fileURLWithPath: (prefs.syncFolder as NSString).expandingTildeInPath)
         guard !prefs.syncFolder.isEmpty else { return "no sync folder" }
         let fm = FileManager.default
@@ -160,9 +162,10 @@ final class TransferService {
                 log.warn("Mirror: \(rel) failed (\(error.localizedDescription))")
             }
         }
-        // Remove server copies whose source moved away.
+        // Only prune when asked: switching folders must never delete what an
+        // earlier session already mirrored.
         var removed = 0
-        if let serverEnum = fm.enumerator(at: dest, includingPropertiesForKeys: [.isRegularFileKey]) {
+        if prune, let serverEnum = fm.enumerator(at: dest, includingPropertiesForKeys: [.isRegularFileKey]) {
             for case let file as URL in serverEnum where file.pathExtension.lowercased() == "webp" {
                 if !expected.contains(file.path) {
                     try? fm.removeItem(at: file)
@@ -400,7 +403,8 @@ final class TransferService {
             lastSyncStatus = "no folder set"
             return
         }
-        let root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        let source = prefs.liveFolder.isEmpty ? prefs.downloadDirectory : prefs.liveFolder
+        let root = URL(fileURLWithPath: (source as NSString).expandingTildeInPath)
         var relative = record.url.path
         if relative.hasPrefix(root.path) {
             relative = String(relative.dropFirst(root.path.count))
