@@ -857,6 +857,8 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     var onRename: ((PhotoRecord, String) -> Bool)?
     var onBack: (() -> Void)?
     var onFocusMain: (() -> Void)?
+    var onForward: (() -> Void)?
+    var onNewLiveFolder: (() -> Void)?
     var onStatusToggle: ((String) -> Void)?
     var onActiveChanged: ((Bool) -> Void)?
     var canGoBack = false
@@ -971,7 +973,8 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
 
         let stack = NSStackView(views: [
             headerRow,
-            row([backButton, folderButton]),
+            row([backButton, folderButton, makeButton("+", target: self, action: #selector(newFolder)),
+                 makeButton("→", target: self, action: #selector(goForward))]),
             folderLabel,
             chooseFolder,
             row([newFolderField, createFolder]),
@@ -1164,6 +1167,8 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func chooseFolder() { onChooseFolder?() }
+    @objc private func goForward() { onForward?() }
+    @objc private func newFolder() { onNewLiveFolder?() }
 
     @objc private func focusMainView() { onFocusMain?() }
 

@@ -462,7 +462,7 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
 
         let reveal = makeButton("Show in Finder", target: self, action: #selector(revealSelected))
         let open = makeButton("Open", target: self, action: #selector(openSelected))
-        let folder = makeButton("Choose Folder…", target: self, action: #selector(chooseFolder))
+        let folder = makeButton("Browse…", target: self, action: #selector(chooseFolder))
         let syncFolder = makeButton("Sync Folder", target: self, action: #selector(syncFolderAction))
         let buttons = NSStackView(views: [open, reveal, folder, syncFolder])
         buttons.orientation = .horizontal
@@ -627,7 +627,7 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         reveal.isEnabled = hasRow
         menu.addItem(reveal)
         menu.addItem(NSMenuItem.separator())
-        let choose = NSMenuItem(title: "Choose Folder to Browse…", action: #selector(browseFolderAction), keyEquivalent: "")
+        let choose = NSMenuItem(title: "Browse Folder… (does not change capture)", action: #selector(browseFolderAction), keyEquivalent: "")
         choose.target = self
         menu.addItem(choose)
     }

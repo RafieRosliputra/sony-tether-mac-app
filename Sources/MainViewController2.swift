@@ -110,6 +110,8 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     private var focusWindow: FocusWindowController?
     private var clientView: ClientViewWindowController?
     private var folderStack: [String] = []
+    private var liveHistory: [String] = []
+    private var liveIndex = -1
     private var photosRoot: URL?
     private var autoSyncTimer: Timer?
     private var pausedLiveForPView = false
@@ -787,10 +789,12 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         if focusWindow == nil {
             let w = FocusWindowController()
             w.onChooseFolder = { [weak self] in self?.chooseFolder() }
+            w.onForward = { [weak self] in self?.goForwardLiveFolder() }
+            w.onNewLiveFolder = { [weak self] in self?.createFolderInLive() }
             w.onNewFolder = { [weak self] name in self?.createSubfolder(name) ?? false }
             w.onRename = { [weak self] record, name in self?.rename(record, to: name) ?? false }
             w.onLiveView = { [weak self] on in self?.setLiveView(on) }
-            w.onBack = { [weak self] in self?.goBackFolder() }
+            w.onBack = { [weak self] in self?.goBackLiveFolder() }
             w.onStatusToggle = { [weak self] key in self?.handleStatusToggle(key) }
             w.onActiveChanged = { [weak self] active in
                 guard let self else { return }
@@ -906,6 +910,11 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         return true
     }
 
+    private func createFolderInLive() {
+        let current = URL(fileURLWithPath: (prefs.liveFolder as NSString).expandingTildeInPath)
+        createFolder(in: current)
+    }
+
     private func createFolder(in parent: URL) {
         let alert = NSAlert()
         alert.messageText = "New folder"
@@ -925,10 +934,8 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             Logger.shared.warn("Could not create folder: \(error.localizedDescription)")
             return
         }
-        photosView.setRoot(URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath))
-        photosView.showFolder(target)
-        photosRoot = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
-        Logger.shared.info("New folder → \(target.path) (capture folder unchanged)")
+        setLiveFolder(target)
+        Logger.shared.info("New live folder → \(target.path)")
     }
 
     private func deleteFolder(_ folder: URL) {
@@ -1053,6 +1060,54 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         logCard.isHidden = !logVisible
     }
 
+    /// The only place that changes the working (live) folder. Everything —
+    /// main window, pview, Preferences — goes through here, and the change
+    /// starts a new session.
+    func setLiveFolder(_ url: URL, recordHistory: Bool = true) {
+        let path = url.standardizedFileURL.path
+        try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        let previous = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath).standardizedFileURL.path
+        prefs.downloadDirectory = path
+        prefs.liveFolder = path
+        prefs.save()
+        camera.prefs = prefs
+        if recordHistory && path != previous {
+            if liveIndex < liveHistory.count - 1 {
+                liveHistory = Array(liveHistory.prefix(liveIndex + 1))
+            }
+            if liveHistory.last != path {
+                liveHistory.append(path)
+                liveIndex = liveHistory.count - 1
+            }
+        }
+        photosRoot = url
+        photosView.setRoot(url)
+        photosView.scanFolder(url)
+        camera.session.number += 1
+        camera.session.batch = 1
+        camera.session.sequence = 1
+        updateSessionUI()
+        showPhotosIfVisible()
+        refreshFocusWindow(select: nil)
+        Logger.shared.info("Live folder → \(path) (session \(camera.session.number))")
+    }
+
+    func goBackLiveFolder() {
+        guard liveIndex > 0 else { return }
+        liveIndex -= 1
+        setLiveFolder(URL(fileURLWithPath: liveHistory[liveIndex]), recordHistory: false)
+    }
+
+    func goForwardLiveFolder() {
+        guard liveIndex >= 0, liveIndex < liveHistory.count - 1 else { return }
+        liveIndex += 1
+        setLiveFolder(URL(fileURLWithPath: liveHistory[liveIndex]), recordHistory: false)
+    }
+
+    private func showPhotosIfVisible() {
+        if tabs.selectedSegment == 1 { photosView.scanFolder(photosRoot ?? URL(fileURLWithPath: prefs.liveFolder)) }
+    }
+
     func chooseFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -1062,12 +1117,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         panel.directoryURL = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
-            self.folderStack.append(self.prefs.downloadDirectory)
-            self.prefs.downloadDirectory = url.path
-            self.prefs.liveFolder = url.path
-            self.prefs.save()
-            self.updateSessionUI()
-            Logger.shared.info("Download folder → \(url.path)")
+            self.setLiveFolder(url)
         }
     }
 
@@ -1124,8 +1174,12 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     func showPreferencesWindow() {
         PreferencesWindowController.present(prefs: prefs) { [weak self] updated in
             guard let self else { return }
+            let folderChanged = updated.downloadDirectory != self.prefs.downloadDirectory
             self.prefs = updated
             self.camera.prefs = updated
+            if folderChanged {
+                self.setLiveFolder(URL(fileURLWithPath: (updated.downloadDirectory as NSString).expandingTildeInPath))
+            }
             if updated.apiEnabled {
                 self.api.start(eventPort: updated.apiEventPort, replyPort: updated.apiReplyPort)
             } else {
