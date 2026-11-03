@@ -784,6 +784,16 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
 
         // Left column widgets
         let title = makeLabel("Capture", size: 13, weight: .semibold)
+        let mainScreen = makeButton("Main Screen", target: self, action: #selector(focusMainView))
+        mainScreen.toolTip = "Bring the main sonyTether window forward"
+        let headerSpacer = NSView()
+        headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let headerRow = NSStackView(views: [title, headerSpacer, mainScreen])
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .centerY
+        headerRow.spacing = 8
+        headerRow.translatesAutoresizingMaskIntoConstraints = false
+        headerRow.widthAnchor.constraint(equalToConstant: 258).isActive = true
         let backButton = makeButton("← Back", target: self, action: #selector(goBack))
         folderButton.bezelStyle = .rounded
         folderButton.controlSize = .small
@@ -863,7 +873,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         }
 
         let stack = NSStackView(views: [
-            title,
+            headerRow,
             row([backButton, folderButton]),
             folderLabel,
             chooseFolder,
@@ -878,7 +888,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
             gridCheck,
             row([zoomPopup]),
             makeSectionLabel("Overview"),
-            row([aspectPopup, makeButton("Main view", target: self, action: #selector(focusMainView))]),
+            row([aspectPopup]),
             overview,
             overviewHint,
             makeSectionLabel("Transfer"),
