@@ -89,6 +89,61 @@ final class TransferService {
         }
     }
 
+    /// Mirrors the whole download tree to the sync folder as WebP: new files
+    /// are converted, moved files follow the new folder, removed files go away.
+    @discardableResult
+    func mirrorSync() -> String {
+        let prefs = self.prefs
+        guard prefs.transferSyncEnabled else { return "sync disabled" }
+        let root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        let dest = URL(fileURLWithPath: (prefs.syncFolder as NSString).expandingTildeInPath)
+        guard !prefs.syncFolder.isEmpty else { return "no sync folder" }
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) else {
+            return "cannot read \(root.lastPathComponent)"
+        }
+        var expected = Set<String>()
+        var copied = 0
+        for case let file as URL in enumerator {
+            let ext = file.pathExtension.lowercased()
+            guard ["jpg", "jpeg", "png", "tif", "tiff", "arw"].contains(ext) else { continue }
+            var rel = file.path
+            if rel.hasPrefix(root.path) { rel = String(rel.dropFirst(root.path.count)) }
+            rel = (rel as NSString).deletingPathExtension + ".webp"
+            let target = dest.appendingPathComponent(rel)
+            expected.insert(target.path)
+            if fm.fileExists(atPath: target.path) { continue }
+            let record = PhotoRecord(url: file, name: file.lastPathComponent, camera: "", node: "",
+                                     batch: 0, sessionNumber: 0, sessionName: "", width: 0, height: 0,
+                                     format: "", aperture: "", shutter: "", iso: "", focalLength: "",
+                                     bytes: 0, capturedAt: Date(), uniqueTag: "", barcode: "")
+            guard let webp = webpVersion(of: record) else { continue }
+            do {
+                try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if fm.fileExists(atPath: target.path) { try? fm.removeItem(at: target) }
+                try fm.copyItem(at: webp, to: target)
+                copied += 1
+            } catch {
+                log.warn("Mirror: \(rel) failed (\(error.localizedDescription))")
+            }
+        }
+        // Remove server copies whose source moved away.
+        var removed = 0
+        if let serverEnum = fm.enumerator(at: dest, includingPropertiesForKeys: [.isRegularFileKey]) {
+            for case let file as URL in serverEnum where file.pathExtension.lowercased() == "webp" {
+                if !expected.contains(file.path) {
+                    try? fm.removeItem(at: file)
+                    removed += 1
+                }
+            }
+        }
+        let summary = "mirror: \(copied) copied, \(removed) removed"
+        lastSyncStatus = summary
+        log.info("Sync \(summary) → \(dest.path)")
+        publish()
+        return summary
+    }
+
     func pushLast(_ record: PhotoRecord) {
         let prefs = self.prefs
         queue.async { [weak self] in self?.adbPush(record, prefs: prefs) }
@@ -172,23 +227,31 @@ final class TransferService {
             .first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
             return "scrcpy not installed (brew install scrcpy)"
         }
+        // Scrcpy runs on the Mac and mirrors the phone. Some Android 14
+        // devices fail the default encoder, so pin h264 and cap the size.
+        var args = ["--no-audio", "--video-codec=h264", "--max-size=1280",
+                    "--window-title=sonyTether scrcpy"]
+        if let serial = adbDevices().first { args += ["-s", serial] }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: scrcpy)
-        p.arguments = ["--no-audio"]
+        p.arguments = args
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return "scrcpy failed: \(error.localizedDescription)" }
-        log.info("scrcpy launched")
+        log.info("scrcpy launched \(args.joined(separator: " "))")
         return "scrcpy launched"
     }
 
     @discardableResult
     func adbPullToRefresh() -> String {
         guard let adb = adbBinary, let serial = adbDevices().first else { return "no device" }
-        // Swipe from mid-screen downwards, not from the very top (that opens the
-        // notification shade).
-        let out = run(adb, ["-s", serial, "shell", "input", "swipe", "540", "700", "540", "1500", "300"])
-        log.info("ADB pull-to-refresh")
+        // Bring the gallery forward, then pull down inside its list. Starting
+        // around 45% of the screen avoids the notification shade.
+        _ = run(adb, ["-s", serial, "shell", "monkey", "-p", prefs.adbGalleryPackage,
+                      "-c", "android.intent.category.LAUNCHER", "1"])
+        Thread.sleep(forTimeInterval: 0.8)
+        let out = run(adb, ["-s", serial, "shell", "input", "swipe", "540", "900", "540", "1650", "400"])
+        log.info("ADB pull-to-refresh in \(prefs.adbGalleryPackage)")
         return out
     }
 
@@ -226,7 +289,7 @@ final class TransferService {
         let target = dir.appendingPathComponent(base + ".webp")
         if !FileManager.default.fileExists(atPath: target.path) {
             let result = run("/opt/homebrew/bin/cwebp",
-                             ["-quiet", "-q", "85", record.url.path, "-o", target.path])
+                             ["-quiet", "-q", "50", record.url.path, "-o", target.path])
             if !FileManager.default.fileExists(atPath: target.path) {
                 log.warn("WebP conversion failed: \(result)")
                 return nil

@@ -370,6 +370,7 @@ final class SyncTabView: NSView {
     var prefProvider: () -> Preferences = { Preferences.load() }
     var onCommit: ((Preferences) -> Void)?
     var onSyncAll: (() -> Void)?
+    var onMirror: (() -> Void)?
 
     private let enabled = NSButton(checkboxWithTitle: "Copy every capture to the sync folder", target: nil, action: nil)
     private let mirror = NSButton(checkboxWithTitle: "Keep the session subfolder structure", target: nil, action: nil)
@@ -395,6 +396,7 @@ final class SyncTabView: NSView {
         }
         let browse = makeButton("Browse…", target: self, action: #selector(browse))
         let syncNow = makeButton("Sync All Now", target: self, action: #selector(syncNowAction))
+        let mirrorNow = makeButton("Mirror folder tree", target: self, action: #selector(mirrorAction))
         let reveal = makeButton("Reveal Folder", target: self, action: #selector(reveal))
 
         let stack = NSStackView(views: [
@@ -402,7 +404,7 @@ final class SyncTabView: NSView {
             enabled,
             mirror,
             NSStackView(views: [folder, browse]),
-            NSStackView(views: [syncNow, reveal]),
+            NSStackView(views: [syncNow, mirrorNow, reveal]),
             status,
             detail,
         ])
@@ -450,6 +452,7 @@ final class SyncTabView: NSView {
     }
 
     @objc private func syncNowAction() { onSyncAll?() }
+    @objc private func mirrorAction() { onMirror?() }
 
     @objc private func reveal() {
         let path = (folder.stringValue as NSString).expandingTildeInPath

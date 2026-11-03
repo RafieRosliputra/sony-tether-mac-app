@@ -191,14 +191,22 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         statusDot.widthAnchor.constraint(equalToConstant: 8).isActive = true
         statusDot.heightAnchor.constraint(equalToConstant: 8).isActive = true
 
+        let pviewButton = makeButton("PView", target: self, action: #selector(openPView))
+        pviewButton.bezelStyle = .rounded
+        pviewButton.controlSize = .small
+        pviewButton.translatesAutoresizingMaskIntoConstraints = false
+
         let dotRow = NSStackView(views: [statusDot, statusLabel])
         dotRow.orientation = .horizontal
         dotRow.spacing = 6
         dotRow.translatesAutoresizingMaskIntoConstraints = false
 
         bar.addSubview(tabs)
+        bar.addSubview(pviewButton)
         bar.addSubview(dotRow)
         NSLayoutConstraint.activate([
+            pviewButton.leadingAnchor.constraint(equalTo: tabs.trailingAnchor, constant: 10),
+            pviewButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             tabs.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 14),
             tabs.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             dotRow.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -16),
@@ -448,6 +456,10 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             NSWorkspace.shared.activateFileViewerSelecting([record.url])
         }
         photosView.onChooseFolder = { [weak self] in self?.chooseFolder() }
+        photosView.onMove = { [weak self] urls, folder in
+            self?.movePhotos(urls, to: folder)
+        }
+        // photosView.setRoot(URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath))
 
         hotKey.onTrigger = { [weak self] in self?.captureNow() }
         hotKey.start(with: CaptureShortcut.load())
@@ -472,6 +484,11 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         syncTab.prefProvider = { [weak self] in self?.prefs ?? Preferences.load() }
         syncTab.onCommit = { [weak self] updated in self?.applyPrefs(updated) }
         syncTab.onSyncAll = { [weak self] in self?.syncAllNow() }
+        syncTab.onMirror = { [weak self] in
+            guard let self else { return }
+            self.transfer.mirrorSync()
+            self.focusWindow?.renderTransferStatus()
+        }
         shortcutTab.onChange = { NotificationCenter.default.post(name: .shortcutsChanged, object: nil) }
         scheduleAutoRestart()
         updateSessionUI()
@@ -565,6 +582,34 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         focusWindow?.canGoBack = !folderStack.isEmpty
         focusWindow?.showWindow(nil)
         focusWindow?.window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func movePhotos(_ urls: [URL], to folder: URL) {
+        var moved: [(URL, URL)] = []
+        for url in urls {
+            let target = folder.appendingPathComponent(url.lastPathComponent)
+            guard target != url else { continue }
+            do {
+                if FileManager.default.fileExists(atPath: target.path) {
+                    try FileManager.default.removeItem(at: target)
+                }
+                try FileManager.default.moveItem(at: url, to: target)
+                moved.append((url, target))
+            } catch {
+                Logger.shared.warn("Move failed: \(error.localizedDescription)")
+            }
+        }
+        for (old, new) in moved {
+            if let index = photos.firstIndex(where: { $0.url == old }) {
+                photos[index].url = new
+                photos[index].name = new.lastPathComponent
+            }
+            transfer.propagateRename(from: old, to: new)
+        }
+        photosView.setPhotos(photos)
+        // photosView.setRoot(URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath))
+        Logger.shared.info("Moved \(moved.count) file(s) → \(folder.lastPathComponent)")
+        transfer.mirrorSync()
     }
 
     func goBackFolder() {
@@ -826,6 +871,8 @@ final class MainViewController: NSViewController, NSWindowDelegate {
 
     @objc private func tabChanged() { updateTabs() }
 
+    @objc private func openPView() { showFocusWindow() }
+
     private func updateTabs() {
         let segment = tabs.selectedSegment
         captureArea.isHidden = segment != 0
@@ -933,6 +980,12 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             if let tag = command["tag"] as? String { camera.session.uniqueTag = tag }
             DispatchQueue.main.async { self.updateSessionUI() }
             return ["ok": true]
+        case "mirror":
+            return ["ok": true, "result": transfer.mirrorSync()]
+        case "scrcpy":
+            return ["ok": true, "result": transfer.adbScrcpy()]
+        case "refresh":
+            return ["ok": true, "result": transfer.adbPullToRefresh()]
         case "controls":
             var out: [[String: Any]] = []
             for group in camera.controls {

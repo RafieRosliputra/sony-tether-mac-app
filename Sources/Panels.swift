@@ -320,6 +320,12 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     var onOpen: ((PhotoRecord) -> Void)?
     var onReveal: ((PhotoRecord) -> Void)?
     var onChooseFolder: (() -> Void)?
+    var onMove: (([URL], URL) -> Void)?
+
+    private let folderTable = NSTableView()
+    private let folderScroll = NSScrollView()
+    private var folders: [URL] = []
+    private var root: URL?
 
     private let columns: [(String, String, CGFloat)] = [
         ("name", "Name", 190), ("time", "Time", 70), ("size", "Size", 90),
@@ -335,7 +341,38 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    func setRoot(_ url: URL) {
+        root = url
+        var list: [URL] = [url]
+        if let enumerator = FileManager.default.enumerator(at: url,
+                                                           includingPropertiesForKeys: [.isDirectoryKey],
+                                                           options: [.skipsHiddenFiles]) {
+            for case let child as URL in enumerator {
+                let isDir = (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+                if isDir { list.append(child) }
+                if list.count > 400 { break }
+            }
+        }
+        folders = list
+        folderTable.reloadData()
+    }
+
     private func build() {
+        let folderColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("folder"))
+        folderColumn.title = "Folders"
+        folderColumn.width = 190
+        folderTable.addTableColumn(folderColumn)
+        folderTable.headerView = nil
+        folderTable.dataSource = self
+        folderTable.delegate = self
+        folderTable.rowHeight = 18
+        folderTable.registerForDraggedTypes([.fileURL])
+        folderScroll.documentView = folderTable
+        folderScroll.hasVerticalScroller = true
+        folderScroll.translatesAutoresizingMaskIntoConstraints = false
+        folderScroll.widthAnchor.constraint(equalToConstant: 210).isActive = true
+        addSubview(folderScroll)
+
         for (id, title, width) in columns {
             let c = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
             c.title = title
@@ -368,12 +405,15 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         addSubview(summary)
 
         NSLayoutConstraint.activate([
+            folderScroll.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            folderScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            folderScroll.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             buttons.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            buttons.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            buttons.leadingAnchor.constraint(equalTo: folderScroll.trailingAnchor, constant: 10),
             summary.centerYAnchor.constraint(equalTo: buttons.centerYAnchor),
             summary.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             scroll.topAnchor.constraint(equalTo: buttons.bottomAnchor, constant: 8),
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scroll.leadingAnchor.constraint(equalTo: folderScroll.trailingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
@@ -385,9 +425,43 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         summary.stringValue = "\(list.count) photos · \(Fmt.bytes(list.reduce(0) { $0 + $1.bytes }))"
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { photos.count }
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        tableView === folderTable ? folders.count : photos.count
+    }
+
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard tableView === table, row < photos.count else { return nil }
+        let item = NSPasteboardItem()
+        item.setString(photos[row].url.absoluteString, forType: .fileURL)
+        return item
+    }
+
+    func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo,
+                   proposedRow row: Int, proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
+        tableView === folderTable && row >= 0 ? .move : []
+    }
+
+    func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo,
+                   row: Int, dropOperation op: NSTableView.DropOperation) -> Bool {
+        guard tableView === folderTable, row >= 0, row < folders.count else { return false }
+        var urls: [URL] = []
+        if let items = info.draggingPasteboard.readObjects(forClasses: [NSURL.self],
+                                                          options: [.urlReadingFileURLsOnly: true]) as? [URL] {
+            urls = items
+        }
+        guard !urls.isEmpty else { return false }
+        onMove?(urls, folders[row])
+        return true
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if tableView === folderTable {
+            let cell = NSTextField(labelWithString: "")
+            cell.font = NSFont.systemFont(ofSize: 11)
+            cell.stringValue = folders[row].lastPathComponent
+            cell.toolTip = folders[row].path
+            return cell
+        }
         guard let column = tableColumn, row < photos.count else { return nil }
         let p = photos[row]
         let text: String
