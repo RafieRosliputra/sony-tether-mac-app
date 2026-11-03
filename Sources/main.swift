@@ -29,6 +29,10 @@ private func runSelfTest() -> Int32 {
         verLine = String(cString: first)
     }
     print("libgphoto2: \(verLine)")
+    let usb = USBBus.devices()
+    let sony = usb.filter { $0.vendorID == USBBus.sonyVendorID }
+    print("usb devices: \(usb.count) · Sony: \(sony.count)"
+        + (sony.isEmpty ? "" : " (" + sony.map { "\($0.hexIDs) \($0.product)" }.joined(separator: ", ") + ")"))
 
     let camlibs = ProcessInfo.processInfo.environment["CAMLIBS"] ?? "unset"
     let iolibs = ProcessInfo.processInfo.environment["IOLIBS"] ?? "unset"

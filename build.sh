@@ -12,7 +12,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
 APP_NAME="sonyTether"
-VERSION="0.1.1"
+VERSION="0.1.2"
 BUNDLE_ID="com.johorstudio.sonytether"
 MIN_MACOS="26.0"
 ARCH="arm64"
@@ -53,7 +53,7 @@ compile() {
     -L "$GPHOTO_PREFIX/lib" \
     -L "$BREW/lib" \
     -lgphoto2 -lgphoto2_port \
-    -framework AppKit -framework Foundation \
+    -framework AppKit -framework Foundation -framework IOKit \
     "$ROOT"/Sources/*.swift \
     -o "$APP/Contents/MacOS/$APP_NAME"
 }

@@ -265,6 +265,14 @@ final class CameraService {
                 Self.log.error("Camera connect failed (\(openFailureCount)x): \(detail)")
                 Self.log.info("Checklist: body powered on · USB cable in the camera port · "
                     + "Menu → Setup → USB → PC Remote · close Imaging Edge / Lightroom / Photos")
+                let sony = USBBus.sonyDevices()
+                if sony.isEmpty {
+                    Self.log.warn("USB: no Sony device on the bus at all — cable, port or camera power")
+                } else {
+                    let list = sony.map { "\($0.hexIDs) \($0.product)" }.joined(separator: ", ")
+                    Self.log.warn("USB: Sony device present (\(list)) but libgphoto2 did not claim it — "
+                        + "USB mode is probably not PC Remote, or another app owns the PTP interface")
+                }
             }
             publishStatus()
             return
