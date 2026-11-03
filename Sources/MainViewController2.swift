@@ -410,6 +410,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             self.updateSessionUI()
             self.transfer.handle(record)
             self.refreshFocusWindow(select: record, isNew: true)
+            self.updateFocusStatuses()
             self.clientView?.show(image: NSImage(contentsOf: record.url))
             self.api.broadcast(["event": "photo", "photo": self.json(for: record)])
         }
@@ -476,6 +477,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         syncTab.isHidden = true
         NotificationCenter.default.addObserver(forName: .transferStatus, object: nil, queue: .main) { [weak self] _ in
             self?.focusWindow?.renderTransferStatus()
+            self?.updateFocusStatuses()
         }
         adbTab.prefProvider = { [weak self] in self?.prefs ?? Preferences.load() }
         adbTab.service = transfer
@@ -561,6 +563,62 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         camera.setConnected(true)
     }
 
+    // MARK: Focus status
+
+    private func handleStatusToggle(_ key: String) {
+        switch key {
+        case "camera":
+            camera.setConnected(!captureStatus.connected)
+        case "live":
+            toggleLiveView()
+        case "adb":
+            prefs.transferADBEnabled.toggle()
+            applyPrefs(prefs)
+        case "sync":
+            prefs.transferSyncEnabled.toggle()
+            applyPrefs(prefs)
+        case "api":
+            prefs.apiEnabled.toggle()
+            applyPrefs(prefs)
+        case "stayawake":
+            prefs.adbStayAwake.toggle()
+            applyPrefs(prefs)
+            transfer.adbApplyDisplaySettings()
+        default:
+            break
+        }
+        updateFocusStatuses()
+    }
+
+    func updateFocusStatuses() {
+        guard let focusWindow else { return }
+        var data = PViewStatusData()
+        data.cameraConnected = captureStatus.connected
+        data.liveOn = captureStatus.liveViewState == .running
+        data.battery = captureStatus.battery ?? "—"
+        data.storage = captureStatus.storage ?? "—"
+        let items = camera.controls.flatMap { $0.items }
+        func value(_ name: String) -> String { items.first { $0.name == name }?.current ?? "—" }
+        data.exposure = "\(value("iso")) · \(value("shutterspeed")) · \(value("f-number"))"
+        data.lastError = captureStatus.lastError ?? ""
+        data.adbEnabled = prefs.transferADBEnabled
+        data.adbDevice = transfer.adbDevices().first ?? "none"
+        data.adbLast = TransferStatusBroker.shared.summary
+        data.syncEnabled = prefs.transferSyncEnabled
+        let syncPath = (prefs.syncFolder as NSString).expandingTildeInPath
+        data.syncReachable = !syncPath.isEmpty && FileManager.default.fileExists(atPath: syncPath)
+        data.syncLast = TransferStatusBroker.shared.summary
+        data.folder = (prefs.downloadDirectory as NSString).lastPathComponent
+        data.prefix = prefs.filenamePrefix
+        let dir = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        data.nextNumber = CameraService.nextSequence(prefix: prefs.filenamePrefix, in: dir)
+        data.lastFile = photos.last?.name ?? "—"
+        data.fileCounter = photos.isEmpty ? "0/0" : "\(photos.count)/\(photos.count)"
+        data.apiOn = api.isRunning
+        data.phoneNote = transfer.adbDevices().isEmpty ? "not connected" : "connected"
+        focusWindow.updateStatuses(data)
+    }
+
     // MARK: Focus window
 
     func showFocusWindow() {
@@ -571,6 +629,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             w.onRename = { [weak self] record, name in self?.rename(record, to: name) ?? false }
             w.onLiveView = { [weak self] on in self?.setLiveView(on) }
             w.onBack = { [weak self] in self?.goBackFolder() }
+            w.onStatusToggle = { [weak self] key in self?.handleStatusToggle(key) }
             w.onFocusMain = { [weak self] in
                 NSApp.activate(ignoringOtherApps: true)
                 self?.view.window?.makeKeyAndOrderFront(nil)
@@ -579,6 +638,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         }
         refreshFocusWindow(select: photos.last)
         focusWindow?.canGoBack = !folderStack.isEmpty
+        updateFocusStatuses()
         focusWindow?.showWindow(nil)
         focusWindow?.window?.makeKeyAndOrderFront(nil)
     }
@@ -675,6 +735,33 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         return true
     }
 
+    func clearCache() {
+        let fm = FileManager.default
+        let webp = fm.temporaryDirectory.appendingPathComponent("sonyTether-webp", isDirectory: true)
+        try? fm.removeItem(at: webp)
+        let caches = fm.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/sonyTether", isDirectory: true)
+        try? fm.removeItem(at: caches)
+        Logger.shared.info("Cache cleared (webp temp + thumbnails); settings kept")
+    }
+
+    func resetAllSettings() {
+        let domain = Bundle.main.bundleIdentifier ?? "com.johorstudio.sonytether"
+        UserDefaults.standard.removePersistentDomain(forName: domain)
+        UserDefaults.standard.synchronize()
+        Logger.shared.warn("All settings reset to defaults — restart the app to apply")
+        prefs = Preferences.load()
+        camera.prefs = prefs
+        transfer.prefs = prefs
+        updateSessionUI()
+    }
+
+    func revealCache() {
+        let caches = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches", isDirectory: true)
+        NSWorkspace.shared.activateFileViewerSelecting([caches])
+    }
+
     func syncAllNow() {
         transfer.syncAll(photos)
     }
@@ -748,6 +835,8 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     }
 
     func showPhotos() {
+        let root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        photosView.scanFolder(root)
         tabs.selectedSegment = 1
         updateTabs()
     }

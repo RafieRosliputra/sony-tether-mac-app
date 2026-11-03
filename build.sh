@@ -12,7 +12,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
 APP_NAME="sonyTether"
-VERSION="0.8.0"
+VERSION="0.9.0"
 BUNDLE_ID="com.johorstudio.sonytether"
 MIN_MACOS="26.0"
 ARCH="arm64"

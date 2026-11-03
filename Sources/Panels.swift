@@ -328,7 +328,7 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private var root: URL?
 
     private let columns: [(String, String, CGFloat)] = [
-        ("name", "Name", 190), ("time", "Time", 70), ("size", "Size", 90),
+        ("name", "Name", 210), ("counter", "Count", 60), ("time", "Time", 70), ("size", "Size", 90),
         ("format", "Format", 60), ("aperture", "Aperture", 66), ("shutter", "Shutter", 66),
         ("iso", "ISO", 50), ("batch", "Batch", 50), ("session", "Session", 60),
         ("tag", "Tag", 90), ("bytes", "Bytes", 70),
@@ -477,6 +477,8 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         case "session": text = "\(p.sessionNumber)"
         case "tag": text = p.uniqueTag
         case "bytes": text = Fmt.bytes(p.bytes)
+        case "counter":
+            text = row == photos.count - 1 ? "\(row + 1)/\(photos.count)" : "\(row + 1)"
         default: text = ""
         }
         let id = NSUserInterfaceItemIdentifier("cell")
@@ -489,7 +491,38 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate {
             cell.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
         }
         cell.stringValue = text
+        if column.identifier.rawValue == "name" {
+            cell.textColor = row == photos.count - 1 ? .systemRed : .labelColor
+            cell.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5,
+                                                         weight: row == photos.count - 1 ? .semibold : .regular)
+        } else if column.identifier.rawValue == "counter" {
+            cell.textColor = row == photos.count - 1 ? .systemRed : .secondaryLabelColor
+        }
         return cell
+    }
+
+    /// Lists every image in the folder (not just this session's shots).
+    func scanFolder(_ root: URL) {
+        guard let enumerator = FileManager.default.enumerator(at: root,
+                                                              includingPropertiesForKeys: [.fileSizeKey, .creationDateKey],
+                                                              options: [.skipsHiddenFiles]) else { return }
+        var found: [(URL, Date, Int)] = []
+        for case let url as URL in enumerator {
+            let ext = url.pathExtension.lowercased()
+            guard ["jpg", "jpeg", "png", "tif", "tiff", "webp"].contains(ext) else { continue }
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .creationDateKey])
+            found.append((url, values?.creationDate ?? Date.distantPast, values?.fileSize ?? 0))
+        }
+        found.sort { $0.1 < $1.1 }
+        let records = found.map { item in
+            PhotoRecord(url: item.0, name: item.0.lastPathComponent, camera: "", node: "",
+                        batch: 0, sessionNumber: 0, sessionName: "", width: 0, height: 0,
+                        format: item.0.pathExtension.uppercased(), aperture: "", shutter: "",
+                        iso: "", focalLength: "", bytes: item.2, capturedAt: item.1,
+                        uniqueTag: "", barcode: "")
+        }
+        setPhotos(records)
+        setRoot(root)
     }
 
     @objc private func openSelected() {

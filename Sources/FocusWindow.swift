@@ -743,6 +743,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     private let gridCheck = NSButton(checkboxWithTitle: "Grid overlay", target: nil, action: nil)
     private let zoomPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let transferLabel = makeLabel("", size: 10, color: .tertiaryLabelColor)
+    private let statusPanel = PViewStatusView()
     private let adbDot = NSView()
     private let syncDot = NSView()
     private let adbLabel = makeLabel("ADB —", size: 10, color: .secondaryLabelColor)
@@ -759,6 +760,7 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     var onRename: ((PhotoRecord, String) -> Bool)?
     var onBack: (() -> Void)?
     var onFocusMain: (() -> Void)?
+    var onStatusToggle: ((String) -> Void)?
     var canGoBack = false
     var liveFramesEnabled = false
 
@@ -891,11 +893,8 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
             row([aspectPopup]),
             overview,
             overviewHint,
-            makeSectionLabel("Transfer"),
-            row([adbDot, adbLabel]),
-            row([syncDot, syncLabel]),
-            statusScroll,
-            transferLabel,
+            makeSectionLabel("Status"),
+            statusPanel,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -906,6 +905,10 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
         overviewHeight = overview.heightAnchor.constraint(equalToConstant: 150)
         overviewWidth?.isActive = true
         overviewHeight?.isActive = true
+        statusPanel.translatesAutoresizingMaskIntoConstraints = false
+        statusPanel.heightAnchor.constraint(equalToConstant: 300).isActive = true
+        statusPanel.widthAnchor.constraint(equalToConstant: 262).isActive = true
+        statusPanel.onToggle = { [weak self] key in self?.onStatusToggle?(key) }
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: left.topAnchor, constant: 14),
             stack.leadingAnchor.constraint(equalTo: left.leadingAnchor, constant: 14),
@@ -1013,6 +1016,10 @@ final class FocusWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// Red frame around the window while the body is unreachable.
+    func updateStatuses(_ data: PViewStatusData) {
+        statusPanel.update(data)
+    }
+
     func setCameraConnected(_ connected: Bool) {
         guard let content = window?.contentView else { return }
         content.wantsLayer = true

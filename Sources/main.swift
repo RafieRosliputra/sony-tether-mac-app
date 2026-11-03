@@ -251,6 +251,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         photosMenu.addItem(withTitle: "Show Capture", action: #selector(showCapture), keyEquivalent: "1")
         photosItem.submenu = photosMenu
 
+        let cacheItem = NSMenuItem()
+        mainMenu.addItem(cacheItem)
+        let cacheMenu = NSMenu(title: "Cache")
+        cacheMenu.addItem(withTitle: "Delete Cache (keep settings)", action: #selector(clearCache), keyEquivalent: "")
+        cacheMenu.addItem(withTitle: "Reveal Cache Folder", action: #selector(revealCache), keyEquivalent: "")
+        cacheMenu.addItem(NSMenuItem.separator())
+        cacheMenu.addItem(withTitle: "Reset All Settings to Default", action: #selector(resetSettings), keyEquivalent: "")
+        cacheItem.submenu = cacheMenu
+
         let windowItem = NSMenuItem()
         mainMenu.addItem(windowItem)
         let windowMenu = NSMenu(title: "Window")
@@ -270,7 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             #selector(NSWindow.miniaturize(_:)), #selector(NSWindow.zoom(_:)),
             #selector(NSWindow.toggleFullScreen(_:)),
         ].map { NSStringFromSelector($0) }
-        for menu in [appMenu, fileMenu, cameraMenu, scriptsMenu, displayMenu, transferMenu, photosMenu, windowMenu, helpMenu] {
+        for menu in [appMenu, fileMenu, cameraMenu, scriptsMenu, displayMenu, transferMenu, cacheMenu, photosMenu, windowMenu, helpMenu] {
             for item in menu.items where item.action != nil {
                 if item.target == nil && !standard.contains(NSStringFromSelector(item.action!)) {
                     item.target = self
@@ -350,6 +359,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .preferences: showPreferences()
         case .restartApp: restartApp()
         }
+    }
+
+    @objc private func clearCache() { controller.clearCache() }
+    @objc private func revealCache() { controller.revealCache() }
+    @objc private func resetSettings() {
+        let alert = NSAlert()
+        alert.messageText = "Reset every setting to default?"
+        alert.informativeText = "Shortcuts, folders, ADB, sync, naming and layout go back to defaults. Photo files are not touched."
+        alert.addButton(withTitle: "Reset")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        if alert.runModal() == .alertFirstButtonReturn { controller.resetAllSettings() }
     }
 
     @objc private func openRepo() {
