@@ -342,11 +342,14 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
     private var folders: [URL] = []
     private var root: URL?
 
-    private let columns: [(String, String, CGFloat)] = [
-        ("name", "Name", 210), ("counter", "Count", 60), ("folder", "Folder", 90), ("time", "Time", 70), ("size", "Size", 90),
-        ("format", "Format", 60), ("aperture", "Aperture", 66), ("shutter", "Shutter", 66),
-        ("iso", "ISO", 50), ("batch", "Batch", 50), ("session", "Session", 60),
-        ("tag", "Tag", 90), ("bytes", "Bytes", 70),
+    // name, title, width, minimum width — the minimum stops a drag from
+    // collapsing a column to a single character.
+    private let columns: [(String, String, CGFloat, CGFloat)] = [
+        ("name", "Name", 240, 150), ("counter", "Count", 60, 52), ("folder", "Folder", 100, 70),
+        ("time", "Time", 84, 70), ("size", "Size", 84, 60), ("format", "Format", 60, 52),
+        ("aperture", "Aperture", 66, 60), ("shutter", "Shutter", 72, 60),
+        ("iso", "ISO", 56, 48), ("batch", "Batch", 54, 48), ("session", "Session", 64, 54),
+        ("tag", "Tag", 90, 60), ("bytes", "Bytes", 70, 60),
     ]
 
     override init(frame: NSRect) {
@@ -427,10 +430,12 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         folderScroll.widthAnchor.constraint(equalToConstant: 280).isActive = true
         addSubview(folderScroll)
 
-        for (id, title, width) in columns {
+        for (id, title, width, minWidth) in columns {
             let c = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
             c.title = title
             c.width = width
+            c.minWidth = minWidth
+            c.maxWidth = 900
             table.addTableColumn(c)
         }
         table.dataSource = self
@@ -438,7 +443,10 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         table.usesAlternatingRowBackgroundColors = true
         table.allowsMultipleSelection = true
         table.rowHeight = 20
-        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        // resizing one column must not squeeze the others to a single character
+        table.columnAutoresizingStyle = .noColumnAutoresizing
+        table.allowsColumnResizing = true
+        table.allowsColumnReordering = false
         table.target = self
         table.doubleAction = #selector(openSelected)
         let menu = NSMenu()
@@ -544,12 +552,11 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMe
         case "folder":
             if let live = liveFolder {
                 let livePath = live.standardizedFileURL.path
-                let path = p.url.standardizedFileURL.path
                 let parent = p.url.deletingLastPathComponent().standardizedFileURL.path
                 if parent == livePath {
                     text = "root"
-                } else if path.hasPrefix(livePath) {
-                    text = String(path.dropFirst(livePath.count))
+                } else if parent.hasPrefix(livePath) {
+                    text = String(parent.dropFirst(livePath.count))   // /fas, /fas/inner
                 } else {
                     text = parent
                 }
