@@ -380,7 +380,10 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             guard let self else { return }
             let wasConnected = self.captureStatus.connected
             self.captureStatus = status
-            if status.connected { self.everConnected = true }
+            if status.connected {
+                self.everConnected = true
+                if self.recoveryPanel != nil { self.dismissRecovery() }
+            }
             self.updateConnectionChrome(connected: status.connected,
                                         transition: wasConnected != status.connected)
             self.controls.update(status: status, controls: self.camera.controls, liveOn: self.liveOn)
@@ -413,6 +416,9 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             self.updateFocusStatuses()
             self.clientView?.show(image: NSImage(contentsOf: record.url))
             self.api.broadcast(["event": "photo", "photo": self.json(for: record)])
+        }
+        camera.onRecoveryNeeded = { [weak self] streak in
+            self?.showRecoveryPanel(streak)
         }
         camera.onScriptState = { [weak self] state in
             self?.scriptPanel.render(state)
@@ -496,6 +502,95 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         controls.update(status: captureStatus, controls: [], liveOn: liveOn)
         setLiveView(true)
         applySessionFromUI()
+    }
+
+    // MARK: Recovery
+
+    private var recoveryPanel: NSPanel?
+    private var recoveryCountdown: Timer?
+    private var recoverySeconds = 0
+
+    private func showRecoveryPanel(_ streak: Int) {
+        if let panel = recoveryPanel {
+            // Already visible: refresh the message and keep the countdown.
+            if let label = panel.contentView?.subviews.compactMap({ $0 as? NSTextField }).first {
+                label.stringValue = "Still trying… \(streak) failed attempts. Restart the app to reset the USB link, or keep waiting — the loop continues."
+            }
+            return
+        }
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 430, height: 190),
+                            styleMask: [.titled, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
+        panel.title = "Camera not reachable"
+        panel.level = .floating
+        panel.isFloatingPanel = true
+        panel.hidesOnDeactivate = false
+
+        let label = makeLabel("5 connect attempts failed. The app keeps retrying in the background. "
+            + "Restarting the app resets the USB link — usually the fastest way back.", size: 11)
+        label.maximumNumberOfLines = 4
+        label.preferredMaxLayoutWidth = 390
+        label.lineBreakMode = .byWordWrapping
+        let countdown = makeLabel("", size: 10, color: .secondaryLabelColor)
+        let restart = makeButton("Restart App", target: self, action: #selector(restartFromRecovery))
+        let keep = makeButton("Keep Trying", target: self, action: #selector(dismissRecovery))
+        let buttons = NSStackView(views: [keep, restart])
+        buttons.orientation = .horizontal
+        buttons.spacing = 8
+
+        let stack = NSStackView(views: [label, countdown, buttons])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        panel.contentView?.addSubview(stack)
+        if let content = panel.contentView {
+            NSLayoutConstraint.activate([
+                stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
+                stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
+                stack.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -18),
+            ])
+        }
+        if let window = view.window {
+            let frame = window.frame
+            panel.setFrameOrigin(NSPoint(x: frame.midX - 215, y: frame.maxY - 240))
+        }
+        panel.orderFront(nil)
+        recoveryPanel = panel
+
+        // If nobody answers, restart on our own after 20 seconds — a stuck USB
+        // link cannot heal inside this process.
+        recoverySeconds = 20
+        countdown.stringValue = "Auto-restart in 20 s"
+        let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self, self.recoveryPanel != nil else { return }
+            self.recoverySeconds -= 1
+            if self.recoverySeconds <= 0 {
+                self.restartFromRecovery()
+            } else if let panel = self.recoveryPanel,
+                      let text = panel.contentView?.subviews
+                        .flatMap({ ($0 as? NSStackView)?.arrangedSubviews ?? [] })
+                        .compactMap({ $0 as? NSTextField })
+                        .last {
+                text.stringValue = "Auto-restart in \(self.recoverySeconds) s"
+            }
+        }
+        recoveryCountdown = timer
+    }
+
+    @objc private func dismissRecovery() {
+        recoveryCountdown?.invalidate()
+        recoveryCountdown = nil
+        recoveryPanel?.close()
+        recoveryPanel = nil
+        Logger.shared.info("Recovery notice dismissed — still retrying")
+    }
+
+    @objc private func restartFromRecovery() {
+        recoveryCountdown?.invalidate()
+        recoveryCountdown = nil
+        Logger.shared.info("Restarting the app to reset the USB link")
+        restartApplication()
     }
 
     // MARK: Connection chrome

@@ -99,6 +99,8 @@ final class CameraService {
     var onFrame: ((Data) -> Void)?
     var onPhoto: ((PhotoRecord) -> Void)?
     var onScriptState: ((ScriptState) -> Void)?
+    /// Called on the main thread when the connection keeps failing.
+    var onRecoveryNeeded: ((Int) -> Void)?
 
     struct ScriptState {
         var name: String = ""
@@ -150,6 +152,7 @@ final class CameraService {
     private var callName: String?
     private var callStartedAt: Date?
     private var warnedStall = false
+    private var failureStreak = 0
     private var watchdog: DispatchSourceTimer?
     private var scriptTask: DispatchWorkItem?
     private var scriptStopRequested = false
@@ -534,6 +537,7 @@ final class CameraService {
 
         let record = makeRecord(url: target, bytes: payload.count, capturedAt: capturedAt,
                                 session: namingSession)
+        failureStreak = 0
         appendManifest(record)
         status.captures += 1
         status.bytes += payload.count
@@ -865,8 +869,9 @@ final class CameraService {
             }
             guard let (name, elapsed) = stall else { return }
             Self.log.error("Camera stopped responding during \(name) "
-                + "(\(Int(elapsed))s) — unplug the USB cable, plug it back in, then press Connect")
+                + "(\(Int(elapsed))s) — waiting for the link to come back")
             self.status.lastError = "Camera not responding during \(name)"
+            self.noteFailure("stall in \(name)")
             self.publishStatus()
         }
         timer.resume()
@@ -905,6 +910,17 @@ final class CameraService {
             Thread.sleep(forTimeInterval: 0.25)
         }
         return false
+    }
+
+    /// Counts failures and asks the UI for help every fifth one. The connect
+    /// loop keeps running regardless.
+    private func noteFailure(_ reason: String) {
+        failureStreak += 1
+        let streak = failureStreak
+        Logger.shared.warn("Connection failure \(streak): \(reason)")
+        if streak % 5 == 0 {
+            DispatchQueue.main.async { [weak self] in self?.onRecoveryNeeded?(streak) }
+        }
     }
 
     /// ptpcamerad is a system daemon under SIP; killing it works, and it
@@ -947,6 +963,11 @@ final class CameraService {
             return
         }
         if !connected {
+            // Standby: as soon as a Sony body shows up on USB, try right away.
+            if !USBBus.sonyDevices().isEmpty,
+               Date().timeIntervalSince(lastOpenAttempt) > 1.5 {
+                lastOpenAttempt = .distantPast
+            }
             tryOpen()
             scheduleTick(1.0)
             return
@@ -1008,6 +1029,7 @@ final class CameraService {
         guard rc == GP_OK, let cam = opened else {
             let detail = gpErrorText(rc)
             openFailureCount += 1
+            noteFailure("connect failed")
             status.connected = false
             status.lastError = detail
             let nowDate = Date()
@@ -1032,6 +1054,7 @@ final class CameraService {
         camera = cam
         connected = true
         openFailureCount = 0
+        failureStreak = 0
         readIdentity()
         status.connected = true
         status.lastError = nil
