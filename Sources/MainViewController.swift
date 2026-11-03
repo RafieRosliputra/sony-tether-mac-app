@@ -85,6 +85,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     private var wantConnected = true
     private var liveWanted = true
     private var liveRequested = false
+    private let hotKey = HotKeyCenter()
 
     // Header
     private let dot = DotView()
@@ -120,6 +121,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         renderFolder(service.destination)
         log.onLine = { [weak self] line in self?.appendLog(line) }
         for line in log.lines { appendLog(line) }
+        setupShortcut()
     }
 
     // MARK: - UI
@@ -299,6 +301,15 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         lastFileLabel.maximumNumberOfLines = 1
         stack.addArrangedSubview(lastFileLabel)
         lastFileLabel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        addSection("Shortcut", gap: 14)
+        addRow("shortcut", title: "Capture")
+        let setShortcut = NSButton(title: "Set Shortcut…", target: self,
+                                   action: #selector(showShortcutRecorder))
+        setShortcut.bezelStyle = .rounded
+        setShortcut.toolTip = "Works even when sonyTether is in the background. "
+            + "Keyboard chord or an extra mouse button (middle / back / forward)."
+        stack.addArrangedSubview(setShortcut)
 
         let divider = NSBox()
         divider.boxType = .separator
@@ -482,6 +493,39 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         logView.string = ""
     }
 
+    // MARK: - Global capture shortcut
+
+    private func setupShortcut() {
+        let saved = CaptureShortcut.load()
+        hotKey.onTrigger = { [weak self] in self?.captureFromShortcut() }
+        hotKey.start(with: saved)
+        rows["shortcut"]?.stringValue = saved.display
+    }
+
+    private func captureFromShortcut() {
+        guard status.connected else {
+            log.warn("Capture shortcut pressed, but no camera is connected")
+            return
+        }
+        log.info("Capture requested (shortcut)")
+        service.capture()
+    }
+
+    @objc private func showShortcutRecorder() {
+        let recorder = ShortcutRecorderViewController()
+        hotKey.isRecording = true
+        recorder.onShortcut = { [weak self] shortcut in
+            guard let self else { return }
+            self.hotKey.isRecording = false
+            self.hotKey.apply(shortcut)
+            shortcut.save()
+            self.rows["shortcut"]?.stringValue = shortcut.display
+            self.log.info("Capture shortcut set: \(shortcut.display)")
+        }
+        recorder.onCancel = { [weak self] in self?.hotKey.isRecording = false }
+        presentAsSheet(recorder)
+    }
+
     // MARK: - Menu entry points
 
     func menuChooseFolder() { chooseFolder() }
@@ -489,6 +533,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     func menuRevealLog() { revealLogFile() }
     func menuToggleConnect() { toggleConnect() }
     func menuCapture() { service.capture() }
+    func menuSetShortcut() { showShortcutRecorder() }
     func menuToggleLive() {
         liveCheckbox.state = liveCheckbox.state == .on ? .off : .on
         toggleLiveView(liveCheckbox)

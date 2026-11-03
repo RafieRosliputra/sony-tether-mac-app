@@ -12,16 +12,17 @@ PTP in **PC Remote** mode.
 | **Connection status** | green/orange/red pill, model / serial / firmware / battery / exposure, auto-retry every 2 s |
 | **Capture** | shutter release from the app, download to the folder of your choice, never overwrites |
 | **Auto-download** | shots taken with the camera's own shutter button are picked up from PTP events |
+| **Global shortcut** | set a keyboard chord or an extra mouse button (middle/back/forward) that captures even when the app is in the background |
 | **Log** | every gphoto2 call/error in the window, also appended to `~/Library/Logs/sonyTether/sonyTether.log` |
 | **Folder** | native `NSOpenPanel`, remembered across launches (`~/Pictures/sonyTether` by default) |
 
-Version 0.1.1 · macOS 26+ · Apple silicon · app code MIT, libgphoto2 LGPL-2.1.
+Version 0.1.3 · macOS 26+ · Apple silicon · app code MIT, libgphoto2 LGPL-2.1.
 
 ---
 
 ## Install (download)
 
-1. Grab `sonyTether-0.1.1.dmg` from [Releases](https://github.com/RafieRosliputra/sony-tether-mac-app/releases).
+1. Grab `sonyTether-0.1.3.dmg` from [Releases](https://github.com/RafieRosliputra/sony-tether-mac-app/releases).
 2. Open the DMG, drag **sonyTether** into **Applications**.
 3. First launch: the app is **ad-hoc signed, not notarized**. Either
    right-click → **Open**, or clear the download flag once:
@@ -103,30 +104,40 @@ deletion**, which is why there is no delete button and why capture works in
 
 ---
 
-## Status: what was verified, what was not
+## Status: tested on a real a7R III
 
-Verified on this machine (macOS 27.2 arm64, libgphoto2 2.5.34):
+Verified on this machine (macOS 27.2 arm64, libgphoto2 2.5.34) with a Sony
+**ILCE-7RM3** over USB, PC Remote mode:
 
-- builds clean with `swiftc`, ad-hoc signature validates
-  (`codesign --verify --deep --strict`)
-- `--selftest`: bundled camlibs load (2467 models incl. `Sony ILCE-7RM3A (PC
-  Control)`), iolibs load, capture-file writing works
+- connected as `Sony Alpha-A7r III (PC Control)`; serial + firmware 3.0 read
+- **live view**: 1024×680 JPEG frames at ~9 fps, 143–153 KB per frame
+- **capture**: shutter released in 2.0–3.1 s, 22–24 MB JPEG saved in ~20 ms,
+  card and folder in sync; `capt_R3_0000x.JPG` → `capt_R3_0000x-1.JPG` on repeat
+- **battery / exposure** read from the config tree (97%, ISO 200 · 1/100 · …)
+- **global shortcut**: ⌃⌥C captured a frame with Finder in front (app in the
+  background); recorded and re-armed ⇧⌘K through the in-app recorder
+- no ERROR lines in a 5-capture session; the Sony "no JPEG in LiveView"
+  hiccup right after a shot is retried silently (debug log only) and live view
+  resumes
+
+Headless checks that still run without a camera:
+
+- `--selftest` — bundled camlibs (2467 models incl. `Sony ILCE-7RM3A (PC
+  Control)`), iolibs, capture-file writing, folder writable, USB bus count
+- `codesign --verify --deep --strict`
 - app launches from a copy carrying a Safari-style quarantine flag (App
-  Translocation), no crash, log written, UI renders. Gatekeeper assessment is
-  **disabled on this machine**, so the right-click-Open flow itself was not
-  exercised — see the install note above.
+  Translocation), no crash. Gatekeeper assessment is disabled on this machine,
+  so the right-click-Open flow itself was not exercised.
 
-**Not verified:** no a7R III was attached while building this release, so
-live-view frame rate, capture timing and the download path have not been run
-against a physical body. Sony live view uses libgphoto2's `0xffffc002`
-preview-object path; if the body refuses it the UI says
-"Live view not supported by this body/setting" instead of hanging.
+Still untested: other Sony bodies, RAW (ARW) downloads on this firmware,
+PTP/IP, and the mouse-button trigger (the keyboard branch is the tested one).
 
 Known limits:
 
 - one camera per process, USB only (PTP/IP plugin is bundled but unused)
 - RAW+JPEG: one file per capture (libgphoto2 returns the primary object)
 - no delete, no in-app settings editor (ISO/shutter/aperture are read-only here)
+- live view pauses ~0.2 s after each capture (body re-arms the preview object)
 - ad-hoc signature → not notarized, Gatekeeper needs one right-click
 - arm64, macOS 26+
 

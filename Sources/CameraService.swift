@@ -76,6 +76,7 @@ final class CameraService {
     private var previewInterval: TimeInterval = 0.10
     private var previewDurations: [TimeInterval] = []
     private var previewFailures = 0
+    private var lastPreviewLogAt = Date.distantPast
     private var liveFrames: [Date] = []
     private var lastFpsPublish = Date.distantPast
 
@@ -190,6 +191,8 @@ final class CameraService {
             // image out of the body's buffer (see libgphoto2 issue #966).
             self.drainEvents(limit: 20, dwell: 0.01)
 
+            self.previewFailures = 0
+            self.lastFrameAt = Date().addingTimeInterval(0.15)
             self.download(folder: folder, name: name, source: "app")
         }
     }
@@ -434,9 +437,21 @@ final class CameraService {
 
         guard rc == GP_OK else {
             previewFailures += 1
+            if rc == GP_ERROR {
+                // The body drops the preview object for a moment after a
+                // capture; it comes back on its own. Retry quietly, no log
+                // spam, no error state.
+                if previewFailures > 10,
+                   Date().timeIntervalSince(lastPreviewLogAt) > 30 {
+                    lastPreviewLogAt = Date()
+                    Self.log.debug("Live view re-warming after capture "
+                        + "(\(previewFailures) empty frames)")
+                }
+                lastFrameAt = Date().addingTimeInterval(0.25)
+                return
+            }
             if previewFailures == 1 || previewFailures % 20 == 0 {
-                let msg = gpErrorText(rc)
-                Self.log.warn("Live view frame failed (\(previewFailures)x): \(msg)")
+                Self.log.warn("Live view frame failed (\(previewFailures)x): \(gpErrorText(rc))")
             }
             if rc == GP_ERROR_NOT_SUPPORTED || rc == GP_ERROR_MODEL_NOT_FOUND {
                 status.liveViewState = .unsupported
@@ -461,7 +476,11 @@ final class CameraService {
         previewFailures = 0
         if status.liveViewState != .running {
             status.liveViewState = .running
+            status.lastError = nil
             Self.log.info("Live view running (\(size / 1024) KB/frame)")
+        }
+        if previewFailures > 0 {
+            previewFailures = 0
         }
 
         // Adaptive pacing: never hammer a slow body.
@@ -618,7 +637,14 @@ final class CameraService {
 
 func gpErrorCallback(_ ctx: OpaquePointer?, _ text: UnsafePointer<CChar>?, _ data: UnsafeMutableRawPointer?) {
     guard let text else { return }
-    Logger.shared.error("libgphoto2: \(String(cString: text))")
+    let message = String(cString: text)
+    // The Sony body returns a non-JPEG preview for a moment after each shot.
+    // That is normal and self-healing, so keep it out of the error log.
+    if message.contains("JPEG image in LiveView mode") {
+        Logger.shared.debug("libgphoto2: \(message)")
+        return
+    }
+    Logger.shared.error("libgphoto2: \(message)")
 }
 
 func gpMessageCallback(_ ctx: OpaquePointer?, _ text: UnsafePointer<CChar>?, _ data: UnsafeMutableRawPointer?) {

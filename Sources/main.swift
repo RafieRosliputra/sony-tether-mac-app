@@ -248,6 +248,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cameraMenu.addItem(withTitle: "Connect", action: #selector(toggleConnectMenuItem), keyEquivalent: "d")
         cameraMenu.addItem(withTitle: "Capture", action: #selector(captureMenuItem), keyEquivalent: "r")
         cameraMenu.addItem(withTitle: "Toggle Live View", action: #selector(toggleLiveMenuItem), keyEquivalent: "l")
+        cameraMenu.addItem(NSMenuItem.separator())
+        cameraMenu.addItem(withTitle: "Set Capture Shortcut…", action: #selector(setShortcutMenuItem), keyEquivalent: "k").keyEquivalentModifierMask = [.command, .shift]
         cameraMenuItem.submenu = cameraMenu
 
         let editMenuItem = NSMenuItem()
@@ -320,6 +322,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleConnectMenuItem() { viewController.menuToggleConnect() }
     @objc private func captureMenuItem() { viewController.menuCapture() }
     @objc private func toggleLiveMenuItem() { viewController.menuToggleLive() }
+    @objc private func setShortcutMenuItem() { viewController.menuSetShortcut() }
 }
 
 // MARK: - Entry point
