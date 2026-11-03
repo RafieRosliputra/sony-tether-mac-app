@@ -16,6 +16,8 @@ and a Lightroom Classic plug-in.
 | **Scripts** | timelapse and delayed trigger (shipped), brackets/HDR parked — see the note below |
 | **Log viewer** | every gphoto2 call, level filter, pause, reveal log file |
 | **Global shortcut** | ⌃⌥C by default, keyboard chord or extra mouse button, fires while the app is in the background |
+| **Focus window** | Display → New Display Window: full-size last shot for focus checking, grid overlay, live-view toggle, panorama/rotation overview, photo strip, rename the last shot, create a new capture subfolder |
+| **Transfer** | ADB push to an Android device and/or copy every capture into a sync folder (NAS / backup) |
 | **External API** | JSON lines over TCP — events on 54643, commands on 54644 |
 | **Lightroom Classic** | bundled `sonyTether.lrplugin` imports the session from the capture manifest |
 
@@ -123,6 +125,35 @@ Events: `hello`, `connected`, `disconnected`, `photo`, `script`.
    - *Session status* — count of captures in the manifest.
 
 ---
+
+## Focus window
+
+`Display → New Display Window` (⇧⌘N) opens a second window you can drag to
+another display:
+
+- **big view** — the last photo, scroll to zoom (1×–8×), drag to pan, rule of
+  thirds overlay (toggle). Click **Live view** to swap it for the live feed.
+- **bottom strip** — every capture in the session, click to load one.
+- **overview** — small copy of the frame, `Auto / Horizontal / Vertical`
+  (Vertical rotates 90° for checking a portrait crop).
+- **Capture panel** — current folder, *Choose Folder…*, create a new subfolder
+  by name (it becomes the download folder), the last shot's size and
+  dimensions, and a rename field for the shot you just took.
+
+![focus window](docs/focus-030.png)
+
+## ADB + folder sync
+
+Preferences → **Transfer**:
+
+- **ADB** — enable, set the `adb` path (`/opt/homebrew/bin/adb`), optional
+  device serial (blank = first device) and the target folder on the phone
+  (`/sdcard/DCIM/sonyTether`). Every capture is pushed right after download;
+  failures are logged, a missing device does not block capture.
+- **Folder sync** — enable and pick a folder (a mounted NAS, `client-1month`,
+  `storage`, or any local backup). Each capture is copied there, preserving the
+  session subfolder.
+- Transfer menu: *Sync All Now*, *ADB Push Last Photo*, *ADB Devices*.
 
 ## Scripts
 

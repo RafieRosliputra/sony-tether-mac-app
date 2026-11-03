@@ -71,6 +71,8 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     let api = ExternalAPI()
     private let hotKey = HotKeyCenter()
     private var photos: [PhotoRecord] = []
+    private let transfer: TransferService
+    private var focusWindow: FocusWindowController?
 
     // Panels
     private let controls = CameraControlsView()
@@ -102,6 +104,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     init(camera: CameraService, prefs: Preferences) {
         self.camera = camera
         self.prefs = prefs
+        self.transfer = TransferService(prefs: prefs)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -353,6 +356,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         camera.onFrame = { [weak self] data in
             guard let self else { return }
             if let image = NSImage(data: data) {
+                self.focusWindow?.setLiveFrame(image)
                 self.liveView.image = image
                 self.liveView.overlayText = ""
                 let rep = image.representations.first
@@ -365,6 +369,8 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             self.photos.append(record)
             self.photosView.setPhotos(self.photos)
             self.updateSessionUI()
+            self.transfer.handle(record)
+            self.refreshFocusWindow(select: record)
             self.api.broadcast(["event": "photo", "photo": self.json(for: record)])
         }
         camera.onScriptState = { [weak self] state in
@@ -420,6 +426,88 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         controls.update(status: captureStatus, controls: [], liveOn: liveOn)
         setLiveView(true)
         applySessionFromUI()
+    }
+
+    // MARK: Focus window
+
+    func showFocusWindow() {
+        if focusWindow == nil {
+            let w = FocusWindowController()
+            w.onChooseFolder = { [weak self] in self?.chooseFolder() }
+            w.onNewFolder = { [weak self] name in self?.createSubfolder(name) ?? false }
+            w.onRename = { [weak self] record, name in self?.rename(record, to: name) ?? false }
+            w.onLiveView = { [weak self] on in self?.setLiveView(on) }
+            focusWindow = w
+        }
+        refreshFocusWindow(select: photos.last)
+        focusWindow?.showWindow(nil)
+        focusWindow?.window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func refreshFocusWindow(select: PhotoRecord?) {
+        guard let focusWindow else { return }
+        focusWindow.update(folder: prefs.downloadDirectory,
+                           session: camera.session.snapshot(),
+                           photos: photos,
+                           transfer: TransferStatusBroker.shared.summary)
+        if let select { focusWindow.show(select) }
+    }
+
+    private func createSubfolder(_ name: String) -> Bool {
+        let root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        let target = root.appendingPathComponent(NamePolicy.sanitize(name))
+        do {
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        } catch {
+            Logger.shared.warn("Could not create \(target.path): \(error.localizedDescription)")
+            return false
+        }
+        prefs.downloadDirectory = target.path
+        prefs.save()
+        Logger.shared.info("Download folder → \(target.path)")
+        updateSessionUI()
+        refreshFocusWindow(select: nil)
+        return true
+    }
+
+    private func rename(_ record: PhotoRecord, to newBase: String) -> Bool {
+        let ext = record.url.pathExtension
+        let cleaned = NamePolicy.sanitize(newBase)
+        let fileName = ext.isEmpty ? cleaned : "\(cleaned).\(ext)"
+        let target = record.url.deletingLastPathComponent().appendingPathComponent(fileName)
+        guard target.path != record.url.path else { return true }
+        do {
+            try FileManager.default.moveItem(at: record.url, to: target)
+        } catch {
+            Logger.shared.warn("Rename failed: \(error.localizedDescription)")
+            return false
+        }
+        if let index = photos.firstIndex(where: { $0.id == record.id }) {
+            photos[index].url = target
+            photos[index].name = target.lastPathComponent
+            photosView.setPhotos(photos)
+        }
+        Logger.shared.info("Renamed \(record.name) → \(target.lastPathComponent)")
+        if var last = focusWindow?.lastRecord, last.id == record.id {
+            last.url = target
+            last.name = target.lastPathComponent
+            focusWindow?.lastRecord = last
+        }
+        return true
+    }
+
+    func syncAllNow() {
+        transfer.syncAll(photos)
+    }
+
+    func adbPushLast() {
+        guard let record = photos.last else { return }
+        transfer.pushLast(record)
+    }
+
+    func adbDevicesToList() {
+        let devices = transfer.adbDevices()
+        Logger.shared.info("ADB devices: \(devices.isEmpty ? "none (enable USB debugging)" : devices.joined(separator: ", "))")
     }
 
     // MARK: Actions

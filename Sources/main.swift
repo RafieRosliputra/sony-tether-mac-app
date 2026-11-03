@@ -201,9 +201,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let displayItem = NSMenuItem()
         mainMenu.addItem(displayItem)
         let displayMenu = NSMenu(title: "Display")
+        displayMenu.addItem(withTitle: "New Display Window", action: #selector(showDisplayWindow), keyEquivalent: "n").keyEquivalentModifierMask = [.command, .shift]
         displayMenu.addItem(withTitle: "Toggle Log Viewer", action: #selector(toggleLog), keyEquivalent: "j")
         displayMenu.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f").keyEquivalentModifierMask = [.command, .control]
         displayItem.submenu = displayMenu
+
+        let transferItem = NSMenuItem()
+        mainMenu.addItem(transferItem)
+        let transferMenu = NSMenu(title: "Transfer")
+        transferMenu.addItem(withTitle: "Sync All Now", action: #selector(syncAllNow), keyEquivalent: "")
+        transferMenu.addItem(withTitle: "ADB Push Last Photo", action: #selector(adbPushLast), keyEquivalent: "")
+        transferMenu.addItem(withTitle: "ADB Devices", action: #selector(adbDevices), keyEquivalent: "")
+        transferItem.submenu = transferMenu
 
         let photosItem = NSMenuItem()
         mainMenu.addItem(photosItem)
@@ -231,7 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             #selector(NSWindow.miniaturize(_:)), #selector(NSWindow.zoom(_:)),
             #selector(NSWindow.toggleFullScreen(_:)),
         ].map { NSStringFromSelector($0) }
-        for menu in [appMenu, fileMenu, cameraMenu, scriptsMenu, displayMenu, photosMenu, windowMenu, helpMenu] {
+        for menu in [appMenu, fileMenu, cameraMenu, scriptsMenu, displayMenu, transferMenu, photosMenu, windowMenu, helpMenu] {
             for item in menu.items where item.action != nil {
                 if item.target == nil && !standard.contains(NSStringFromSelector(item.action!)) {
                     item.target = self
@@ -279,6 +288,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func stopScript() { controller.stopScript() }
     @objc private func toggleLog() { controller.toggleLog() }
+    @objc private func showDisplayWindow() { controller.showFocusWindow() }
+    @objc private func syncAllNow() { controller.syncAllNow() }
+    @objc private func adbPushLast() { controller.adbPushLast() }
+    @objc private func adbDevices() { controller.adbDevicesToList() }
     @objc private func showPhotos() { controller.showPhotos() }
     @objc private func showCapture() { controller.showCapture() }
     @objc private func restartApp() {

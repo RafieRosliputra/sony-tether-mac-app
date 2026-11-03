@@ -25,6 +25,13 @@ struct Preferences {
     var lightroomEnabled: Bool
     var lightroomImportFolder: String
 
+    var transferADBEnabled: Bool
+    var adbPath: String
+    var adbDevice: String
+    var adbTargetFolder: String
+    var transferSyncEnabled: Bool
+    var syncFolder: String
+
     var barcodeEnabled: Bool
     var barcodeResetsSequence: Bool
 
@@ -56,6 +63,12 @@ struct Preferences {
             apiReplyPort: i("apiReplyPort", 54644),
             lightroomEnabled: b("lightroomEnabled", false),
             lightroomImportFolder: d.string(forKey: "lightroomImportFolder") ?? "",
+            transferADBEnabled: b("transferADBEnabled", false),
+            adbPath: d.string(forKey: "adbPath") ?? "/opt/homebrew/bin/adb",
+            adbDevice: d.string(forKey: "adbDevice") ?? "",
+            adbTargetFolder: d.string(forKey: "adbTargetFolder") ?? "/sdcard/DCIM/sonyTether",
+            transferSyncEnabled: b("transferSyncEnabled", false),
+            syncFolder: d.string(forKey: "syncFolder") ?? "",
             barcodeEnabled: b("barcodeEnabled", true),
             barcodeResetsSequence: b("barcodeResetsSequence", false)
         )
@@ -80,6 +93,12 @@ struct Preferences {
         d.set(apiReplyPort, forKey: "apiReplyPort")
         d.set(lightroomEnabled, forKey: "lightroomEnabled")
         d.set(lightroomImportFolder, forKey: "lightroomImportFolder")
+        d.set(transferADBEnabled, forKey: "transferADBEnabled")
+        d.set(adbPath, forKey: "adbPath")
+        d.set(adbDevice, forKey: "adbDevice")
+        d.set(adbTargetFolder, forKey: "adbTargetFolder")
+        d.set(transferSyncEnabled, forKey: "transferSyncEnabled")
+        d.set(syncFolder, forKey: "syncFolder")
         d.set(barcodeEnabled, forKey: "barcodeEnabled")
         d.set(barcodeResetsSequence, forKey: "barcodeResetsSequence")
     }

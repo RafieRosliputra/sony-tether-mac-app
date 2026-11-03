@@ -32,6 +32,15 @@ final class PreferencesWindowController: NSWindowController {
     private let eventPortField = NSTextField()
     private let replyPortField = NSTextField()
 
+    // Transfer
+    private let adbEnabled = NSButton(checkboxWithTitle: "Push every capture to an Android device over ADB", target: nil, action: nil)
+    private let adbPathField = NSTextField()
+    private let adbDeviceField = NSTextField()
+    private let adbTargetField = NSTextField()
+    private let syncEnabled = NSButton(checkboxWithTitle: "Copy every capture to a sync folder (NAS / backup)", target: nil, action: nil)
+    private let syncFolderField = NSTextField()
+    private let transferStatus = NSTextField(labelWithString: "")
+
     // Lightroom
     private let lightroomEnabled = NSButton(checkboxWithTitle: "Enable Lightroom Classic plugin support", target: nil, action: nil)
     private let lightroomStatus = NSTextField(labelWithString: "")
@@ -82,7 +91,7 @@ final class PreferencesWindowController: NSWindowController {
     private func build() {
         for (title, build) in [("General", buildGeneral), ("Name Policy", buildNamePolicy),
                                ("Barcode", buildBarcode), ("External API", buildAPI),
-                               ("Lightroom", buildLightroom)] {
+                               ("Transfer", buildTransfer), ("Lightroom", buildLightroom)] {
             let item = NSTabViewItem(identifier: title)
             item.label = title
             item.view = build()
@@ -243,6 +252,70 @@ final class PreferencesWindowController: NSWindowController {
         return v
     }
 
+    private func buildTransfer() -> NSView {
+        let v = pane()
+        for f in [adbPathField, adbDeviceField, adbTargetField, syncFolderField] {
+            f.font = NSFont.systemFont(ofSize: 11)
+            f.controlSize = .small
+            f.bezelStyle = .roundedBezel
+        }
+        adbPathField.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        adbDeviceField.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        adbTargetField.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        syncFolderField.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        adbDeviceField.placeholderString = "serial (blank = first device)"
+        adbPathField.placeholderString = "/opt/homebrew/bin/adb"
+
+        let checkDevices = makeButton("Check devices", target: self, action: #selector(checkADB))
+        let browseSync = makeButton("Browse…", target: self, action: #selector(chooseSyncFolder))
+        transferStatus.font = NSFont.systemFont(ofSize: 10)
+        transferStatus.textColor = .tertiaryLabelColor
+        transferStatus.maximumNumberOfLines = 3
+        transferStatus.lineBreakMode = .byWordWrapping
+        transferStatus.preferredMaxLayoutWidth = 500
+
+        let stack = NSStackView(views: [
+            makeSectionLabel("ADB (Android)"),
+            adbEnabled,
+            row("adb binary", [adbPathField]),
+            row("Device", [adbDeviceField, checkDevices]),
+            row("Target folder", [adbTargetField]),
+            makeSectionLabel("Folder sync"),
+            syncEnabled,
+            row("Sync folder", [syncFolderField, browseSync]),
+            transferStatus,
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        v.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: v.topAnchor, constant: 16),
+            stack.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 18),
+            stack.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -18),
+        ])
+        return v
+    }
+
+    @objc private func checkADB() {
+        let service = TransferService(prefs: prefs)
+        let devices = service.adbDevices()
+        transferStatus.stringValue = devices.isEmpty
+            ? "No ADB device. Enable USB debugging on the phone and reconnect."
+            : "Devices: " + devices.joined(separator: ", ")
+    }
+
+    @objc private func chooseSyncFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            syncFolderField.stringValue = url.path
+        }
+    }
+
     private func buildLightroom() -> NSView {
         let v = pane()
         let note = NSTextField(labelWithString:
@@ -297,6 +370,13 @@ final class PreferencesWindowController: NSWindowController {
         eventPortField.stringValue = "\(prefs.apiEventPort)"
         replyPortField.stringValue = "\(prefs.apiReplyPort)"
 
+        adbEnabled.state = prefs.transferADBEnabled ? .on : .off
+        adbPathField.stringValue = prefs.adbPath
+        adbDeviceField.stringValue = prefs.adbDevice
+        adbTargetField.stringValue = prefs.adbTargetFolder
+        syncEnabled.state = prefs.transferSyncEnabled ? .on : .off
+        syncFolderField.stringValue = prefs.syncFolder
+
         lightroomEnabled.state = prefs.lightroomEnabled ? .on : .off
         updateLightroomStatus()
     }
@@ -317,6 +397,12 @@ final class PreferencesWindowController: NSWindowController {
         p.apiEnabled = apiEnabled.state == .on
         p.apiEventPort = Int(eventPortField.stringValue) ?? 54643
         p.apiReplyPort = Int(replyPortField.stringValue) ?? 54644
+        p.transferADBEnabled = adbEnabled.state == .on
+        p.adbPath = adbPathField.stringValue
+        p.adbDevice = adbDeviceField.stringValue
+        p.adbTargetFolder = adbTargetField.stringValue
+        p.transferSyncEnabled = syncEnabled.state == .on
+        p.syncFolder = syncFolderField.stringValue
         p.lightroomEnabled = lightroomEnabled.state == .on
         return p
     }
