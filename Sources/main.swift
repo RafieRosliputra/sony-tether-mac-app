@@ -147,16 +147,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.minSize = NSSize(width: 1150, height: 700)
         window.setFrameAutosaveName("sonyTetherMainWindow")
         window.delegate = controller
-        if UserDefaults.standard.string(forKey: "NSWindow Frame sonyTetherMainWindow") == nil {
-            window.center()
-        }
         if let visible = (window.screen ?? NSScreen.main)?.visibleFrame {
-            var frame = window.frame
-            frame.size.width = min(frame.width, visible.width)
-            frame.size.height = min(frame.height, visible.height)
-            frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
-            frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
-            if frame != window.frame { window.setFrame(frame, display: false) }
+            window.setFrame(visible, display: false)
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

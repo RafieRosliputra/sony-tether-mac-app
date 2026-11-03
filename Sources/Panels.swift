@@ -508,8 +508,9 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate {
                                                               options: [.skipsHiddenFiles]) else { return }
         var found: [(URL, Date, Int)] = []
         for case let url as URL in enumerator {
+            if url.pathComponents.contains(TransferService.webpFolderName) { continue }
             let ext = url.pathExtension.lowercased()
-            guard ["jpg", "jpeg", "png", "tif", "tiff", "webp"].contains(ext) else { continue }
+            guard ["jpg", "jpeg", "png", "tif", "tiff"].contains(ext) else { continue }
             let values = try? url.resourceValues(forKeys: [.fileSizeKey, .creationDateKey])
             found.append((url, values?.creationDate ?? Date.distantPast, values?.fileSize ?? 0))
         }

@@ -164,7 +164,6 @@ final class ADBTabView: NSView {
     private let wirelessPort = NSTextField()
     private let galleryPkg = NSTextField()
     private let restartEnabled = NSButton(checkboxWithTitle: "Restart the gallery app on the phone automatically", target: nil, action: nil)
-    private let fullBrightness = NSButton(checkboxWithTitle: "Force full brightness on the phone", target: nil, action: nil)
     private let stayAwake = NSButton(checkboxWithTitle: "Keep the phone screen on (no sleep)", target: nil, action: nil)
     private let restartMinutes = NSTextField()
     private let status = makeLabel("", size: 10, color: .secondaryLabelColor)
@@ -192,7 +191,7 @@ final class ADBTabView: NSView {
         galleryPkg.widthAnchor.constraint(equalToConstant: 220).isActive = true
         restartMinutes.widthAnchor.constraint(equalToConstant: 50).isActive = true
 
-        for check in [enabled, autoPush, openAfter, restartEnabled, fullBrightness, stayAwake] {
+        for check in [enabled, autoPush, openAfter, restartEnabled, stayAwake] {
             check.target = self
             check.action = #selector(changed)
         }
@@ -248,7 +247,7 @@ final class ADBTabView: NSView {
             row("", [makeButton("Open scrcpy", target: self, action: #selector(openScrcpy)),
                      makeButton("Pull to refresh", target: self, action: #selector(pullToRefresh))]),
             makeSectionLabel("Phone display"),
-            fullBrightness, stayAwake,
+            stayAwake,
             row("", [makeButton("Apply to phone", target: self, action: #selector(applyDisplaySettings))]),
             makeSectionLabel("Auto restart (phone gallery)"),
             row("Every", [restartMinutes, makeLabel("minutes", size: 11)]),
@@ -283,7 +282,6 @@ final class ADBTabView: NSView {
         galleryPkg.stringValue = p.adbGalleryPackage
         restartEnabled.state = p.adbRestartGalleryEnabled ? .on : .off
         restartMinutes.stringValue = "\(p.adbRestartGalleryMinutes)"
-        fullBrightness.state = p.adbFullBrightness ? .on : .off
         stayAwake.state = p.adbStayAwake ? .on : .off
         status.stringValue = TransferStatusBroker.shared.summary
     }
@@ -301,7 +299,6 @@ final class ADBTabView: NSView {
         p.adbGalleryPackage = galleryPkg.stringValue
         p.adbRestartGalleryEnabled = restartEnabled.state == .on
         p.adbRestartGalleryMinutes = max(1, Int(restartMinutes.stringValue) ?? 5)
-        p.adbFullBrightness = fullBrightness.state == .on
         p.adbStayAwake = stayAwake.state == .on
         onCommit?(p)
     }

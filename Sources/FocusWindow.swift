@@ -3,6 +3,8 @@ import AppKit
 // MARK: - Transfer (ADB + folder sync)
 
 final class TransferService {
+    /// Hidden (from the app) folder that holds the converted WebP copies.
+    static let webpFolderName = "webp"
     var prefs: Preferences
     private let queue = DispatchQueue(label: "com.johorstudio.sonytether.transfer", qos: .utility)
     private let log = Logger.shared
@@ -105,6 +107,7 @@ final class TransferService {
         var expected = Set<String>()
         var copied = 0
         for case let file as URL in enumerator {
+            if file.pathComponents.contains(Self.webpFolderName) { continue }
             let ext = file.pathExtension.lowercased()
             guard ["jpg", "jpeg", "png", "tif", "tiff", "arw"].contains(ext) else { continue }
             var rel = file.path
@@ -238,6 +241,13 @@ final class TransferService {
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return "scrcpy failed: \(error.localizedDescription)" }
+        // Bring the scrcpy window to the front instead of leaving it behind.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            for app in NSWorkspace.shared.runningApplications
+            where app.executableURL?.lastPathComponent == "scrcpy" {
+                app.activate(options: [.activateIgnoringOtherApps])
+            }
+        }
         log.info("scrcpy launched \(args.joined(separator: " "))")
         return "scrcpy launched"
     }
@@ -259,12 +269,6 @@ final class TransferService {
     func adbApplyDisplaySettings() -> String {
         guard let adb = adbBinary, let serial = adbDevices().first else { return "no device" }
         var out = ""
-        if prefs.adbFullBrightness {
-            out += run(adb, ["-s", serial, "shell", "settings", "put", "system",
-                             "screen_brightness", "255"])
-            out += run(adb, ["-s", serial, "shell", "settings", "put", "system",
-                             "screen_brightness_mode", "0"])
-        }
         if prefs.adbStayAwake {
             out += run(adb, ["-s", serial, "shell", "svc", "power", "stayon", "true"])
             out += run(adb, ["-s", serial, "shell", "settings", "put", "system",
@@ -283,7 +287,10 @@ final class TransferService {
 
     /// Android and the server both want WebP; convert with cwebp.
     func webpVersion(of record: PhotoRecord) -> URL? {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sonyTether-webp", isDirectory: true)
+        // Keep the WebP copies inside the capture folder so they travel with the
+        // session; the app hides this folder from its own listings.
+        let root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        let dir = root.appendingPathComponent(Self.webpFolderName, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let base = (record.name as NSString).deletingPathExtension
         let target = dir.appendingPathComponent(base + ".webp")

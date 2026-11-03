@@ -639,6 +639,9 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         refreshFocusWindow(select: photos.last)
         focusWindow?.canGoBack = !folderStack.isEmpty
         updateFocusStatuses()
+        if let screen = focusWindow?.window?.screen ?? NSScreen.main {
+            focusWindow?.window?.setFrame(screen.visibleFrame, display: true)
+        }
         focusWindow?.showWindow(nil)
         focusWindow?.window?.makeKeyAndOrderFront(nil)
     }
@@ -739,6 +742,9 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         let fm = FileManager.default
         let webp = fm.temporaryDirectory.appendingPathComponent("sonyTether-webp", isDirectory: true)
         try? fm.removeItem(at: webp)
+        let sessionWebp = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+            .appendingPathComponent(TransferService.webpFolderName, isDirectory: true)
+        try? fm.removeItem(at: sessionWebp)
         let caches = fm.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Caches/sonyTether", isDirectory: true)
         try? fm.removeItem(at: caches)
