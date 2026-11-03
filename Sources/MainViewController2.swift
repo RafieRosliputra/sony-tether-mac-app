@@ -75,6 +75,8 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     private var focusWindow: FocusWindowController?
     private var clientView: ClientViewWindowController?
     private var folderStack: [String] = []
+    private var photosRoot: URL?
+    private var autoSyncTimer: Timer?
 
     // Panels
     private let controls = CameraControlsView()
@@ -413,6 +415,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             self.updateSessionUI()
             self.transfer.handle(record)
             self.refreshFocusWindow(select: record, isNew: true)
+            if let root = self.photosRoot { self.photosView.scanFolder(root) }
             self.updateFocusStatuses()
             self.clientView?.show(image: NSImage(contentsOf: record.url))
             self.api.broadcast(["event": "photo", "photo": self.json(for: record)])
@@ -462,7 +465,9 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         photosView.onReveal = { record in
             NSWorkspace.shared.activateFileViewerSelecting([record.url])
         }
-        photosView.onChooseFolder = { [weak self] in self?.chooseFolder() }
+        photosView.onChooseFolder = { [weak self] in self?.chooseBrowseFolder() }
+        photosView.onBrowseFolder = { [weak self] in self?.chooseBrowseFolder() }
+        photosView.onConvertPush = { [weak self] record in self?.convertAndPush(record) }
         photosView.onMove = { [weak self] urls, folder in
             self?.movePhotos(urls, to: folder)
         }
@@ -493,11 +498,18 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         syncTab.onSyncAll = { [weak self] in self?.syncAllNow() }
         syncTab.onMirror = { [weak self] in
             guard let self else { return }
-            self.transfer.mirrorSync()
+            self.transfer.mirrorSyncAsync()
             self.focusWindow?.renderTransferStatus()
         }
         shortcutTab.onChange = { NotificationCenter.default.post(name: .shortcutsChanged, object: nil) }
         scheduleAutoRestart()
+        startAutoSync()
+        let initialRoot = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        photosRoot = initialRoot
+        photosView.scanFolder(initialRoot)
+        if prefs.transferSyncEnabled { transfer.mirrorSyncAsync() }
+        scheduleAutoRestart()
+        startAutoSync()
         updateSessionUI()
         controls.update(status: captureStatus, controls: [], liveOn: liveOn)
         setLiveView(true)
@@ -833,6 +845,37 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         return true
     }
 
+    func chooseBrowseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = photosRoot ?? URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        panel.prompt = "Browse"
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            self.photosRoot = url
+            self.photosView.scanFolder(url)
+            Logger.shared.info("Photos tab browsing \(url.path)")
+        }
+    }
+
+    func convertAndPush(_ record: PhotoRecord) {
+        transfer.convertAndPush(record)
+        Logger.shared.info("Manual WebP push queued for \(record.name)")
+    }
+
+    private func startAutoSync() {
+        autoSyncTimer?.invalidate()
+        autoSyncTimer = nil
+        guard prefs.transferSyncEnabled else { return }
+        autoSyncTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            guard let self, self.prefs.transferSyncEnabled else { return }
+            self.transfer.mirrorSyncAsync()
+        }
+        Logger.shared.info("Auto mirror every 30 s")
+    }
+
     func clearCache() {
         let fm = FileManager.default
         let webp = fm.temporaryDirectory.appendingPathComponent("sonyTether-webp", isDirectory: true)
@@ -936,7 +979,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
     }
 
     func showPhotos() {
-        let root = URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
+        let root = photosRoot ?? URL(fileURLWithPath: (prefs.downloadDirectory as NSString).expandingTildeInPath)
         photosView.scanFolder(root)
         tabs.selectedSegment = 1
         updateTabs()
@@ -1080,6 +1123,7 @@ final class MainViewController: NSViewController, NSWindowDelegate {
         camera.prefs = updated
         transfer.prefs = updated
         scheduleAutoRestart()
+        startAutoSync()
         updateSessionUI()
         refreshFocusWindow(select: nil)
         adbTab.reload()
@@ -1165,7 +1209,8 @@ final class MainViewController: NSViewController, NSWindowDelegate {
             DispatchQueue.main.async { self.updateSessionUI() }
             return ["ok": true]
         case "mirror":
-            return ["ok": true, "result": transfer.mirrorSync()]
+            transfer.mirrorSyncAsync()
+            return ["ok": true, "queued": true]
         case "scrcpy":
             return ["ok": true, "result": transfer.adbScrcpy()]
         case "refresh":

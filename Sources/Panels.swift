@@ -311,7 +311,7 @@ final class ScriptPanel: NSView {
 
 // MARK: - Photos table
 
-final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate {
+final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
     private let table = NSTableView()
     private let scroll = NSScrollView()
     private let summary = makeLabel("0 photos", size: 11, color: .secondaryLabelColor)
@@ -321,6 +321,9 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     var onReveal: ((PhotoRecord) -> Void)?
     var onChooseFolder: (() -> Void)?
     var onMove: (([URL], URL) -> Void)?
+    var onConvertPush: ((PhotoRecord) -> Void)?
+    var onBrowseFolder: (() -> Void)?
+    private var browseRoot: URL?
 
     private let folderTable = NSTableView()
     private let folderScroll = NSScrollView()
@@ -348,6 +351,7 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate {
                                                            includingPropertiesForKeys: [.isDirectoryKey],
                                                            options: [.skipsHiddenFiles]) {
             for case let child as URL in enumerator {
+                if child.pathComponents.contains(TransferService.webpFolderName) { continue }
                 let isDir = (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
                 if isDir { list.append(child) }
                 if list.count > 400 { break }
@@ -386,6 +390,9 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         table.target = self
         table.doubleAction = #selector(openSelected)
+        let menu = NSMenu()
+        menu.delegate = self
+        table.menu = menu
 
         scroll.documentView = table
         scroll.hasVerticalScroller = true
@@ -501,8 +508,39 @@ final class PhotosView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         return cell
     }
 
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let row = table.selectedRow
+        let hasRow = row >= 0 && row < photos.count
+        let convert = NSMenuItem(title: "Convert to WebP & push to Android", action: #selector(convertPush), keyEquivalent: "")
+        convert.target = self
+        convert.isEnabled = hasRow
+        menu.addItem(convert)
+        let open = NSMenuItem(title: "Open", action: #selector(openSelected), keyEquivalent: "")
+        open.target = self
+        open.isEnabled = hasRow
+        menu.addItem(open)
+        let reveal = NSMenuItem(title: "Show in Finder", action: #selector(revealSelected), keyEquivalent: "")
+        reveal.target = self
+        reveal.isEnabled = hasRow
+        menu.addItem(reveal)
+        menu.addItem(NSMenuItem.separator())
+        let choose = NSMenuItem(title: "Choose Folder to Browse…", action: #selector(browseFolderAction), keyEquivalent: "")
+        choose.target = self
+        menu.addItem(choose)
+    }
+
+    @objc private func convertPush() {
+        let row = table.selectedRow
+        guard row >= 0, row < photos.count else { return }
+        onConvertPush?(photos[row])
+    }
+
+    @objc private func browseFolderAction() { onBrowseFolder?() }
+
     /// Lists every image in the folder (not just this session's shots).
     func scanFolder(_ root: URL) {
+        browseRoot = root
         guard let enumerator = FileManager.default.enumerator(at: root,
                                                               includingPropertiesForKeys: [.fileSizeKey, .creationDateKey],
                                                               options: [.skipsHiddenFiles]) else { return }

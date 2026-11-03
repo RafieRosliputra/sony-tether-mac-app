@@ -91,6 +91,11 @@ final class TransferService {
         }
     }
 
+    /// Fire-and-forget variant so the UI thread never waits on cwebp.
+    func mirrorSyncAsync() {
+        queue.async { [weak self] in _ = self?.mirrorSync() }
+    }
+
     /// Mirrors the whole download tree to the sync folder as WebP: new files
     /// are converted, moved files follow the new folder, removed files go away.
     @discardableResult
@@ -305,7 +310,23 @@ final class TransferService {
         return target
     }
 
-    private func adbPush(_ record: PhotoRecord, prefs: Preferences) {
+    /// Right-click action: make sure a WebP exists (reuse it if the server
+    /// already has one) and push it, overwriting whatever is on the phone.
+    func convertAndPush(_ record: PhotoRecord) {
+        let prefs = self.prefs
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard let webp = self.webpVersion(of: record) else {
+                self.lastADBStatus = "webp failed"
+                self.publish()
+                return
+            }
+            self.adbPush(record, prefs: prefs, webp: webp, force: true)
+        }
+    }
+
+    private func adbPush(_ record: PhotoRecord, prefs: Preferences,
+                         webp provided: URL? = nil, force: Bool = false) {
         guard let adb = adbBinary else {
             lastADBStatus = "adb not found"
             log.warn("ADB: binary not found (Preferences → Transfer)")
@@ -324,12 +345,15 @@ final class TransferService {
             return
         }
         let target = prefs.adbTargetFolder.isEmpty ? "/sdcard/DCIM/sonyTether" : prefs.adbTargetFolder
-        guard let webp = webpVersion(of: record) else {
+        guard let webp = provided ?? webpVersion(of: record) else {
             lastADBStatus = "webp failed"
             log.warn("ADB: skipped \(record.name), WebP conversion failed")
             return
         }
         let remote = target.hasSuffix("/") ? target + webp.lastPathComponent : target + "/" + webp.lastPathComponent
+        if force {
+            _ = run(adb, ["-s", serial, "shell", "rm", "-f", remote])
+        }
         let output = run(adb, ["-s", serial, "push", webp.path, remote])
         if output.lowercased().contains("error") || output.lowercased().contains("failed") {
             lastADBStatus = "push failed"
