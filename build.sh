@@ -12,7 +12,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
 APP_NAME="sonyTether"
-VERSION="0.1.3"
+VERSION="0.2.0"
 BUNDLE_ID="com.johorstudio.sonytether"
 MIN_MACOS="26.0"
 ARCH="arm64"
@@ -64,6 +64,10 @@ bundle() {
   cp "$ROOT/Info.plist" "$APP/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist" >/dev/null
   cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+  if [ -d "$ROOT/lightroom" ]; then
+    rm -rf "$APP/Contents/Resources/lightroom"
+    cp -R "$ROOT/lightroom" "$APP/Contents/Resources/lightroom"
+  fi
 
   # Copy the resolved dependency closure of libgphoto2 into Frameworks.
   local queue=(

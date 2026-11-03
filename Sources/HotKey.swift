@@ -55,9 +55,11 @@ struct CaptureShortcut: Equatable {
         let code = dict["keyCode"] as? Int
         let mods = dict["modifiers"] as? Int ?? 0
         let mouse = dict["mouseButton"] as? Int
+        let mouseButton = (mouse ?? -1) >= 0 ? mouse : nil
         let label = dict["keyLabel"] as? String ?? ""
-        return CaptureShortcut(keyCode: code.map { UInt16($0) }, keyLabel: label,
-                               modifiers: UInt(mods), mouseButton: mouse)
+        return CaptureShortcut(keyCode: code.map { UInt16($0) }.flatMap { $0 >= 0 ? $0 : nil },
+                               keyLabel: label,
+                               modifiers: UInt(mods), mouseButton: mouseButton)
     }
 
     func save() {

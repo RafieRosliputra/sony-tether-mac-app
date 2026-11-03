@@ -1,167 +1,198 @@
 # sonyTether
 
-A native macOS tethering app for Sony bodies over USB PTP — built for the
-**a7R III** (ILCE-7RM3 / ILCE-7RM3A), works with any Sony body that speaks
-PTP in **PC Remote** mode.
+A native macOS tethering app for Sony bodies over USB PTP, built for the
+**a7R III** (ILCE-7RM3 / 7RM3A). Version 0.2.0 is a Smart Shooter-style studio
+tool: tabs, live view, the full camera control panel, session naming with a
+filename expression language, built-in scripts, a log viewer, a local JSON API
+and a Lightroom Classic plug-in.
 
-![sonyTether](docs/screenshot.png)
+![sonyTether](docs/screenshot-020.png)
 
 | | |
 |---|---|
-| **Live view** | JPEG preview straight from the sensor, adaptive frame pacing, fps + resolution readout |
-| **Connection status** | green/orange/red pill, model / serial / firmware / battery / exposure, auto-retry every 2 s |
-| **Capture** | shutter release from the app, download to the folder of your choice, never overwrites |
-| **Auto-download** | shots taken with the camera's own shutter button are picked up from PTP events |
-| **Global shortcut** | set a keyboard chord or an extra mouse button (middle/back/forward) that captures even when the app is in the background |
-| **Log** | every gphoto2 call/error in the window, also appended to `~/Library/Logs/sonyTether/sonyTether.log` |
-| **Folder** | native `NSOpenPanel`, remembered across launches (`~/Pictures/sonyTether` by default) |
+| **Capture / Photos tabs** | live view with grid, rotate, zoom; the photo table with session, batch and metadata columns |
+| **Camera controls** | aperture, shutter, ISO, exposure ±, quality, image size, WB, colour temperature, DRO, program, metering, focus mode, focus area, drive mode, aspect, capture target, live view effect |
+| **Session naming** | Smart Shooter-compatible expression tokens, live preview, session/batch/sequence counters, unique tag, barcode |
+| **Scripts** | timelapse and delayed trigger (shipped), brackets/HDR parked — see the note below |
+| **Log viewer** | every gphoto2 call, level filter, pause, reveal log file |
+| **Global shortcut** | ⌃⌥C by default, keyboard chord or extra mouse button, fires while the app is in the background |
+| **External API** | JSON lines over TCP — events on 54643, commands on 54644 |
+| **Lightroom Classic** | bundled `sonyTether.lrplugin` imports the session from the capture manifest |
 
-Version 0.1.3 · macOS 26+ · Apple silicon · app code MIT, libgphoto2 LGPL-2.1.
+Version 0.2.0 · macOS 26+ · Apple silicon · app code MIT, libgphoto2 LGPL-2.1.
 
 ---
 
-## Install (download)
+## Install
 
-1. Grab `sonyTether-0.1.3.dmg` from [Releases](https://github.com/RafieRosliputra/sony-tether-mac-app/releases).
-2. Open the DMG, drag **sonyTether** into **Applications**.
-3. First launch: the app is **ad-hoc signed, not notarized**. Either
-   right-click → **Open**, or clear the download flag once:
+1. Grab `sonyTether-0.2.0.dmg` from [Releases](https://github.com/RafieRosliputra/sony-tether-mac-app/releases).
+2. Drag **sonyTether** into Applications.
+3. First launch: the app is ad-hoc signed, not notarized — right-click → **Open**, or
+   `xattr -dr com.apple.quarantine /Applications/sonyTether.app`.
+4. Camera: **Menu → Setup → USB → USB Connection → PC Remote**, camera on, USB
+   cable in the body. Close Imaging Edge, Lightroom, Smart Shooter and Photos.
 
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/sonyTether.app
-   ```
+**macOS 26+ on Apple silicon only** (the bundled libgphoto2 is a Homebrew build
+for macOS 26/27, arm64).
 
-4. Put the body in **PC Remote** mode:
-   **Menu → Setup → USB → USB Connection → PC Remote**.
-   Cable in the camera's USB port (not a hub if you can avoid it), camera on.
-5. Close Imaging Edge / Lightroom / Photos — they grab the PTP device first.
+### If the camera is not detected
 
-The app connects on launch. Header turns green with the model name when the
-body answers; live view starts automatically.
+The log (`Display → Toggle Log Viewer`) tells you which case you are in:
 
-> **macOS 26+ / Apple silicon only.** The bundled libgphoto2 is a Homebrew
-> build with a 26.0/27.0 minimum, and the app is arm64. Intel and older macOS
-> are not supported by this build.
+- `USB: no Sony device on the bus at all` → cable / port / camera off.
+- `USB: Sony device present (054c:0c33 …) but libgphoto2 did not claim it` → the
+  USB mode is not PC Remote, or another app owns the PTP interface.
+- `macOS Image Capture daemon was holding the camera — released it` → the app
+  evicts `ptpcamerad` automatically and retries.
+- `Camera stopped responding during capture` → the body froze mid-transfer.
+  Power-cycle the camera (off/on) and press Connect. See the capture pacing
+  note below.
+
+---
+
+## Capture pacing (important on the a7R III)
+
+The a7R III speaks the older Sony PTP dialect. It takes roughly 1.5 s to
+release a frame and it hangs if a second shutter command arrives while it is
+still writing. The app therefore:
+
+- pauses live view for the whole capture and during scripts,
+- enforces a **6 s minimum gap** between shutter releases,
+- polls the body (`gp_camera_get_config`) until it answers before each shot,
+- keeps `capturetarget` at the body's own default (SDRAM); forcing `card+sdram`
+  made transfers slower and hung more often in testing.
+
+Timelapse intervals below 6 s are therefore effectively 6 s.
+
+---
+
+## Filename expression
+
+Preferences → **Name Policy**. Tokens:
+
+| Token | Meaning | Token | Meaning |
+|---|---|---|---|
+| `[N]` | session name | `[D]` | date `2026-11-03` |
+| `[I]` | session number | `[T]` | time `HHmmss` |
+| `[S]` | sequence | `[M]` | milliseconds |
+| `[B]` | batch | `[X]` | camera serial |
+| `[C]` | camera name | `[o]` | original camera file name |
+| `[A]` | app / node name | `[E]` | extension |
+| `[U]` | unique tag | `[G]` | camera group |
+| `[Z]` | barcode | | |
+
+Width suffix pads with zeros: `[S4]` → `0042`. A `/` creates a subfolder:
+`[N]/[S4].[E]` → `luar/0042.JPG`. Default: `[D]_[T]_[S4].[E]`.
+
+Every capture is also appended to `sonyTether-captures.jsonl` in the download
+folder — that is what the Lightroom plug-in reads.
+
+---
+
+## External API
+
+Preferences → **External API** (off by default).
+
+```bash
+# events (server pushes JSON lines)
+nc 127.0.0.1 54643
+
+# commands (one JSON line in, one out)
+echo '{"cmd":"status"}'  | nc 127.0.0.1 54644
+echo '{"cmd":"capture"}' | nc 127.0.0.1 54644
+echo '{"cmd":"set","name":"iso","value":"800"}' | nc 127.0.0.1 54644
+echo '{"cmd":"controls"}' | nc 127.0.0.1 54644
+echo '{"cmd":"session","name":"luar","number":2,"batch":7,"tag":"TAG1"}' | nc 127.0.0.1 54644
+echo '{"cmd":"script","name":"Timelapse","count":20,"interval":6}' | nc 127.0.0.1 54644
+```
+
+Events: `hello`, `connected`, `disconnected`, `photo`, `script`.
+
+---
+
+## Lightroom Classic plug-in
+
+`lightroom/sonyTether.lrplugin` is bundled inside the app
+(`Contents/Resources/lightroom/`).
+
+1. Lightroom → **File → Plug-in Manager → Add**, pick that folder.
+2. **Library → Plug-in Extras → sonyTether**:
+   - *Import session photos* — adds every capture listed in
+     `sonyTether-captures.jsonl` to the catalog, skips duplicates.
+   - *Choose session folder…* — points the plug-in at a download folder.
+   - *Session status* — count of captures in the manifest.
+
+---
+
+## Scripts
+
+Shipped: **Timelapse** (frames × interval, each downloaded and named) and
+**Delayed trigger**.
+
+**Parked in 0.2.0:** aperture/shutter/ISO bracket and HDR. Changing a setting
+between frames hangs the a7R III's PTP stack in testing; the next version will
+drive the camera's own bracket drive mode (`capturemode` / `dro`) instead of
+rewriting properties between shots. The code is still in the source behind
+`ScriptKind.shipped`.
 
 ---
 
 ## Build from source
 
 ```bash
-brew install libgphoto2          # build-time only, the app bundles its own copy
-./build.sh                       # → build/sonyTether.app, dist/*.dmg, dist/*.zip
-./build.sh app                   # app bundle only
-open build/sonyTether.app        # run it
-```
-
-`build.sh` compiles with `swiftc` (no Xcode project), copies the resolved
-libgphoto2 dependency closure into `Contents/Frameworks`, bundles the `ptp2`
-camera driver + `usb1` I/O plugin, rewrites install names to
-`@executable_path/../Frameworks`, signs ad-hoc, then produces the DMG and ZIP.
-
-### Self test (no camera needed)
-
-```bash
+brew install libgphoto2
+./build.sh                 # app + dist/*.dmg + dist/*.zip
+./build.sh app             # app bundle only
 build/sonyTether.app/Contents/MacOS/sonyTether --selftest
+build/sonyTether.app/Contents/MacOS/sonyTether --probe    # camera handshake
 ```
 
-It proves the bundle is complete: libgphoto2 loads from `Contents/Frameworks`,
-the bundled `ptp2.so` registers **2467 camera models**, the `usb1` I/O plugin
-loads, the ability to write capture files works. `RESULT: PASS` exits 0.
+`--selftest` checks the bundle without a camera: camlibs (2467 models incl.
+`Sony ILCE-7RM3A (PC Control)`), iolibs, name policy, file writing, folder
+writable.
 
 ---
 
-## How it works
+## Layout
 
 ```
-main.swift            AppKit entry point, menus, About, --selftest
-CameraService.swift   libgphoto2 wrapper: open/retry, summary, config widgets,
-                      preview frames, capture + download, PTP event loop
-MainViewController    window, sidebar status, live view, log pane, folder picker
-Logger.swift          UI + file log with 15 s duplicate suppression, 5 MB rotation
-Support.swift         C-string helpers, error formatting
-Screenshots           docs/
+Sources/
+  Model.swift            preferences, session state, filename expressions
+  CameraService.swift    libgphoto2: controls, capture, preview, scripts, watchdog
+  CameraControlsView     left panel
+  Panels.swift           filename panel, script panel, photo table, log pane
+  MainViewController2    tabs, layout, live view canvas, API dispatch
+  PreferencesWindow      General / Name Policy / Barcode / External API / Lightroom
+  ExternalAPI.swift      JSON lines over TCP
+  HotKey.swift           global capture trigger
+  USBBus.swift           IOKit USB probe used by the diagnostics
+lightroom/sonyTether.lrplugin/   Lightroom Classic plug-in
+tools/icon.swift                 icon generator
 ```
-
-One serial `DispatchQueue` owns the `GPContext`/`Camera`, so libgphoto2 is
-never called concurrently. The worker ticks:
-
-- drain PTP events (`gp_camera_wait_for_event`, 0 ms) → on `FILE_ADDED`,
-  download (this is also what flushes a just-shot image out of the body's
-  buffer; see [libgphoto2#966](https://github.com/gphoto/libgphoto2/issues/966))
-- if live view is on, `gp_camera_capture_preview` with adaptive pacing
-  (~10 fps targeted, backs off to 3 fps if the body is slow)
-- refresh battery/exposure from the config tree every 3 s
-- repaint status every second while previewing
-
-Capture is `gp_camera_capture` (libgphoto2's Sony path drives PTP
-`0xd2c1` ShutterRelease) then `gp_camera_file_get` for the full file. Files
-never overwrite: `DSC01234.ARW` → `DSC01234-1.ARW`.
-
-The a7R III reports `Sony Capture` in its PTP capabilities and **no file
-deletion**, which is why there is no delete button and why capture works in
-~2 s steps rather than instantly.
 
 ---
 
-## Status: tested on a real a7R III
+## What was tested (0.2.0)
 
-Verified on this machine (macOS 27.2 arm64, libgphoto2 2.5.34) with a Sony
-**ILCE-7RM3** over USB, PC Remote mode:
+On an ILCE-7RM3, firmware 3.0, macOS 27.2 arm64, with the camera connected:
 
-- connected as `Sony Alpha-A7r III (PC Control)`; serial + firmware 3.0 read
-- **live view**: 1024×680 JPEG frames at ~9 fps, 143–153 KB per frame
-- **capture**: shutter released in 2.0–3.1 s, 22–24 MB JPEG saved in ~20 ms,
-  card and folder in sync; `capt_R3_0000x.JPG` → `capt_R3_0000x-1.JPG` on repeat
-- **battery / exposure** read from the config tree (97%, ISO 200 · 1/100 · …)
-- **global shortcut**: ⌃⌥C captured a frame with Finder in front (app in the
-  background); recorded and re-armed ⇧⌘K through the in-app recorder
-- no ERROR lines in a 5-capture session; the Sony "no JPEG in LiveView"
-  hiccup right after a shot is retried silently (debug log only) and live view
-  resumes
+- connect, live view 1024×680 ~10–13 fps
+- three paced captures, sequence `0001 → 0003`, 7952×5304 JPEG, 6 MB each
+- timelapse 3 frames (4 s interval) — completed
+- API: `status`, `set iso=400`, `capture`, `script`
+- `ptpcamerad` eviction on the first connect after a cable replug
+- watchdog reports `Camera stopped responding during capture` instead of
+  pretending the camera is absent
 
-Headless checks that still run without a camera:
-
-- `--selftest` — bundled camlibs (2467 models incl. `Sony ILCE-7RM3A (PC
-  Control)`), iolibs, capture-file writing, folder writable, USB bus count
-- `codesign --verify --deep --strict`
-- app launches from a copy carrying a Safari-style quarantine flag (App
-  Translocation), no crash. Gatekeeper assessment is disabled on this machine,
-  so the right-click-Open flow itself was not exercised.
-
-Still untested: other Sony bodies, RAW (ARW) downloads on this firmware,
-PTP/IP, and the mouse-button trigger (the keyboard branch is the tested one).
-
-Known limits:
-
-- one camera per process, USB only (PTP/IP plugin is bundled but unused)
-- RAW+JPEG: one file per capture (libgphoto2 returns the primary object)
-- no delete, no in-app settings editor (ISO/shutter/aperture are read-only here)
-- live view pauses ~0.2 s after each capture (body re-arms the preview object)
-- ad-hoc signature → not notarized, Gatekeeper needs one right-click
-- arm64, macOS 26+
+Not verified: Lightroom plug-in inside Lightroom Classic, brackets (parked),
+bulb exposures, PTP/IP, other bodies.
 
 ---
 
 ## Licensing
 
-- **This app**: MIT (see `LICENSE`).
-- **libgphoto2** / **libgphoto2_port**: LGPL-2.1-or-later, shipped as
-  unmodified dylibs in `Contents/Frameworks` next to the app. They are
-  dynamically linked and replaceable, which is what the LGPL requires for a
-  closed or open app that merely uses them. Sources: <https://github.com/gphoto/libgphoto2>.
-- **libexif** (LGPL-2.1), **libltdl** (LGPL-2.1), **libusb** (LGPL-2.1),
-  **libintl** (LGPL-2.1), **libjpeg-turbo** (IJG/BSD) — same rule, bundled
-  unmodified.
-- No code was copied from GPL projects. [`Aya0wind/photographer`](https://github.com/Aya0wind/photographer)
-  (GPL-3.0) and the existing `sony-tether` web app were read for API notes
-  only.
-
-## Prior art that informed this
-
-| Project | License | Use |
-|---|---|---|
-| [gphoto/libgphoto2](https://github.com/gphoto/libgphoto2) | LGPL-2.1 | the PTP layer; Sony preview/capture paths read at source level |
-| [jim-easterbrook/python-gphoto2](https://github.com/jim-easterbrook/python-gphoto2) | LGPL-3.0 | confirmed the config-widget names used by the status panel through the earlier `sony-tether` prototype |
-| [photobooth-app/photobooth-app](https://github.com/photobooth-app/photobooth-app) | MIT | reference for a tether session loop |
-| [Aya0wind/photographer](https://github.com/Aya0wind/photographer) | GPL-3.0 | documented the `CAMLIBS`/`IOLIBS` relocation and Sony property read-back delay (read, not copied) |
+App code MIT (`LICENSE`). Bundled unmodified LGPL libraries: libgphoto2,
+libgphoto2_port, libexif, libltdl, libusb, libintl, libjpeg-turbo. No GPL code
+was copied; `Aya0wind/photographer` (GPL-3.0) was read for the
+`CAMLIBS`/`IOLIBS` relocation note, and Smart Shooter 4 was studied as a
+commercial reference for the feature set only.
